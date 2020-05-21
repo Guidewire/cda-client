@@ -1,0 +1,17 @@
+sourceLocation:
+  bucketName: dummy-bucket
+  manifestKey: dummy/key.json
+outputLocation:
+  path: dummy/path
+savepointsLocation:
+  path: dummy/path
+outputSettings:
+  includeColumnNames: true
+  saveAsSingleFileCSV: true
+  #saveIntoTimestampDirectory: true #Should default missing boolean to false
+# This section is optional
+# performanceTuning:
+#   numberOfJobsInParallelMaxCount: 5
+#   numberOfThreadsPerJob: 10
+sparkTuning:
+  driverMemory: 0.5g # Fractional number is invalid

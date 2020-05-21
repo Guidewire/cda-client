@@ -1,0 +1,11 @@
+sourceLocation:
+  bucketName: dummy-bucket
+  manifestKey: dummy/key.json
+outputLocation:
+  path: dummy/path
+savepointsLocation:
+  path: dummy/path
+outputSettings:
+  includeColumnNames: bananas #this is not a boolean
+  saveAsSingleFileCSV: true
+  saveIntoTimestampDirectory: true

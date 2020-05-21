@@ -1,0 +1,52 @@
+{
+  "taccountlineitem": {
+    "lastSuccessfulWriteTimestamp": "1562112543749",
+    "totalProcessedRecordsCount": 25000,
+    "dataFilesPath": "s3://cda-client-test/CDA/SQL/taccountlineitem",
+    "schemaHistory": {
+      "123456789": "1562112543749"
+    }
+  },
+  "taccount": {
+    "lastSuccessfulWriteTimestamp": "1562112543759",
+    "totalProcessedRecordsCount": 240000,
+    "dataFilesPath": "s3://cda-client-test/CDA/SQL/taccount",
+    "schemaHistory": {
+      "123456789": "1562112543719",
+      "987654321": "1562112543748",
+      "8675309": "1562112543752"
+    }
+  },
+  "note": {
+    "lastSuccessfulWriteTimestamp": "1562112543749",
+    "totalProcessedRecordsCount": 36587,
+    "dataFilesPath": "s3://cda-client-test/CDA/SQL/note",
+    "schemaHistory": {
+      "135792468": "1562112543749"
+    }
+  },
+  "taccounttransaction": {
+    "lastSuccessfulWriteTimestamp": "1562112543749",
+    "totalProcessedRecordsCount": 57873,
+    "dataFilesPath": "s3://cda-client-test/CDA/SQL/taccounttransaction",
+    "schemaHistory": {
+      "246813579": "1562112543749"
+    }
+  },
+  "history": {
+    "lastSuccessfulWriteTimestamp": "1562112543749",
+    "totalProcessedRecordsCount": 49513,
+    "dataFilesPath": "s3://cda-client-test/CDA/SQL/history",
+    "schemaHistory": {
+      "102345689": "1562112543749"
+    }
+  },
+  "taccttxnhistory": {
+    "lastSuccessfulWriteTimestamp": "1562112543749",
+    "totalProcessedRecordsCount": 71027,
+    "dataFilesPath": "s3://cda-client-test/CDA/SQL/taccttxnhistory",
+    "schemaHistory": {
+      "301248659": "1562112543749"
+    }
+  }
+}

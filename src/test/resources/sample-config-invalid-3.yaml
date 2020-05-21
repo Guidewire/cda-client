@@ -1,0 +1,12 @@
+# Missing Section
+# sourceLocation:
+#   bucketName: #mising value
+#   manifestKey: dummy/key.json
+outputLocation:
+  path: dummy/path
+savepointsLocation:
+  path: dummy/path
+outputSettings:
+  includeColumnNames: true
+  saveAsSingleFileCSV: true
+  saveIntoTimestampDirectory: true

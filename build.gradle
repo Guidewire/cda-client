@@ -1,0 +1,59 @@
+plugins {
+  id "scala"
+  id "application"
+  id "com.github.johnrengelman.shadow" version "5.1.0"
+}
+
+group "$projectGroupId"
+version = "$version"
+
+description = """Cloud Data Access Client"""
+mainClassName = "gw.cda.api.CloudDataAccessClient"
+
+repositories {
+  mavenLocal()
+  mavenCentral()
+}
+
+dependencies {
+  implementation "org.scala-lang:scala-library:$scalaVersion.$scalaBuild"
+  testImplementation "org.scalatest:scalatest_$scalaVersion:$scalaTestVersion"
+  testImplementation "junit:junit:$jUnitVersion"
+  testImplementation "org.scalamock:scalamock-scalatest-support_$scalaVersion:$scalamockVersion"
+  implementation "org.apache.logging.log4j:log4j-api:$log4jVersion"
+  implementation "org.apache.logging.log4j:log4j-core:$log4jVersion"
+  implementation "org.apache.spark:spark-core_$scalaVersion:$sparkVersion"
+  implementation "org.apache.spark:spark-sql_$scalaVersion:$sparkVersion"
+  implementation "org.apache.hadoop:hadoop-aws:$hadoopAWSVersion"
+  implementation "com.fasterxml.jackson.module:jackson-module-scala_$scalaVersion:$jacksonVersion"
+  implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:$jacksonYamlVersion"
+  implementation "com.amazonaws:aws-java-sdk-s3:$awsSDKVersion"
+  implementation "org.apache.commons:commons-lang3:$apacheCommonsVersion"
+  implementation "org.rogach:scallop_$scalaVersion:$scallopVersion"
+}
+
+wrapper {
+  gradleVersion = "$gradleVersion"
+  distributionType = Wrapper.DistributionType.ALL
+}
+
+tasks.withType(ScalaCompile).configureEach {
+  scalaCompileOptions.additionalParameters = ["-feature", "-Xfatal-warnings", "-deprecation", "-Xlint:-inaccessible", "-Ywarn-unused-import", "-Ywarn-unused"]
+}
+
+tasks.named("shadowJar").configure {
+  zip64 true
+  classifier = null
+  manifest {
+    attributes 'Multi-Release': 'true'
+  }
+}
+
+// Disabling unnecessary tasks introduced by shadowJar
+tasks.distZip.enabled = false
+tasks.distTar.enabled = false
+tasks.shadowDistZip.enabled = false
+tasks.shadowDistTar.enabled = false
+
+// Disabling normal jar creation since it is superseded by shadowJar
+tasks.jar.enabled = false
