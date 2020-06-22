@@ -133,8 +133,6 @@ trait OutputWriter {
 
     val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
 
-    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
-
     // Determine if we need to create indexes by checking if the table already exists.
     val connection = DriverManager.getConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
     val dbm = connection.getMetaData
@@ -153,7 +151,7 @@ trait OutputWriter {
 
     // Create indexes for table PKs and AKs. Need case logic for different DBs.
     if (needsIndexes) {
-      createIndexes(connection, clientConfig.jdbcConnectionRaw.jdbcUrl, tableNameNoSchema)
+      createIndexes(connection, clientConfig.jdbcConnectionRaw.jdbcUrl, tableName)
     }
 
     connection.close()
@@ -167,7 +165,7 @@ trait OutputWriter {
    */
   private def createIndexes(connection: Connection, url: String, tableName: String): Unit = {
     val stmt = connection.createStatement
-
+    val tableNameNoSchema = tableName.substring(tableName.indexOf(".")+1)
     if (url.toLowerCase.contains("sqlserver")) {
 
       // We can't create unique constraints because all columns are nullable by CDA definition.
@@ -175,7 +173,7 @@ trait OutputWriter {
       //val ddlPk = "alter table " + tableNameNoSchema + " add constraint " + tableNameNoSchema + "_pk primary key nonclustered (gwcbi___seqval_hex)"
       //log.info(ddlPk)
       //stmt.execute(ddlPk)
-      val ddlIdx1 = "create nonclustered index " + tableName + "_idx1 on " + tableName + " (id)"
+      val ddlIdx1 = "create index " + tableNameNoSchema + "_idx1 on " + tableName + " (\"id\")"
       log.info(ddlIdx1)
       stmt.execute(ddlIdx1)
       // Not able able to index nvarchar(max) columns on sql server.
@@ -191,13 +189,13 @@ trait OutputWriter {
        */
 
     } else {
-      if (url.toLowerCase.contains("postgressql")) {
+      if (url.toLowerCase.contains("postgresql")) {
         // We can't create unique constraints because all columns are nullable by CDA definition.
         //We will need to add another param to distinguish between Raw and Merged data once we are able to create PKs.  They will be different for each.
         //val ddlPk = "create unique index " + tableName + "_pk on " + tableName + " (gwcbi___seqval_hex)"
         //log.info(ddlPk)
         //stmt.execute(ddlPk)
-        val ddlIdx1 = "create  index " + tableName + "_idx1 on " + tableName + " (id)"
+        val ddlIdx1 = "create index " + tableNameNoSchema + "_idx1 on " + tableName + " (\"id\")"
         log.info(ddlIdx1)
         stmt.execute(ddlIdx1)
         // Not able able to index nvarchar(max) columns on sql server.
@@ -218,7 +216,7 @@ trait OutputWriter {
           //val ddlPk = "create unique index " + tableName + "_pk on " + tableName + "(ID asc) nologging parallel"
           //log.info(ddlPk)
           //stmt.execute(ddlPk)
-          val ddlIdx1 = "create index " + tableName + "_idx1 on " + tableName + "(ID asc) nologging parallel"
+          val ddlIdx1 = "create index " + tableNameNoSchema + "_idx1 on " + tableName + " (\"id\")"
           log.info(ddlIdx1)
           stmt.execute(ddlIdx1)
           // Need to see if we can do this in oracle....not sure of the datatypes.
@@ -247,7 +245,6 @@ trait OutputWriter {
   private def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
 
     val tableName = clientConfig.jdbcConnectionMerged.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
-    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
 
     // Get list of CDA internal use columns to get rid of.
     val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
@@ -284,7 +281,7 @@ trait OutputWriter {
 
     // Create indexes for table PKs and AKs. Need case logic for different DBs.
     if (needsIndexes) {
-      createIndexes(connection, clientConfig.jdbcConnectionMerged.jdbcUrl, tableNameNoSchema)
+      createIndexes(connection, clientConfig.jdbcConnectionMerged.jdbcUrl, tableName)
     }
 
     // Filter for records to update.

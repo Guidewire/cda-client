@@ -257,7 +257,7 @@ class TableReader(clientConfig: ClientConfig) {
         // this fingerprint to any of the target types.
         val jdbcRawIsOk =  if (clientConfig.outputSettings.saveIntoJdbcRaw) {
           if (outputWriter.schmasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
-            clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, false)) {
+            clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, false)) {
             true
           } else {
             false
