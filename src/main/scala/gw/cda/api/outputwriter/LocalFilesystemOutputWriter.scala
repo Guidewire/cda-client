@@ -6,10 +6,12 @@ import java.nio.file.Files
 import java.nio.file.Paths
 
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
+import com.guidewire.cda.config.ClientConfig
 import org.apache.commons.io.FileUtils
 
 private[outputwriter] class LocalFilesystemOutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
-                                                        override val saveAsSingleFileCSV: Boolean, override val saveIntoTimestampDirectory: Boolean) extends OutputWriter {
+                                                        override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
+                                                        override val clientConfig: ClientConfig) extends OutputWriter {
 
   override def validate(): Unit = {
     if (!Files.isDirectory(Paths.get(outputPath))) {

@@ -19,11 +19,20 @@ class CLIArgumentsProcessor(args: Seq[String]) extends ScallopConf(args) with CL
     required = true
   )
 
+  private val singleTableValueScallopOption: ScallopOption[String] = opt(
+    "tableName",
+    't',
+    "Selection of single table to pull data",
+    default = Some(""),
+    required = false
+  )
+
   // Verify the input args are ok
   verify()
 
   // Make a public accessor to the actual value
   override val configFilePath: String = configFilePathScallopOption()
+  override val singleTableValue: String = singleTableValueScallopOption() //SRhodes - 20200427
 
   // This will be called during the verify(), if there is a problem with the input args
   override def onError(e: Throwable): Unit = e match {

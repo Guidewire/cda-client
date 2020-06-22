@@ -14,6 +14,7 @@ object CloudDataAccessClient {
     // Get the command line args
     val cliArgumentsProcessor = new CLIArgumentsProcessor(args)
     val configFilePath = cliArgumentsProcessor.configFilePath
+    val singleTableValue = cliArgumentsProcessor.singleTableValue
 
     // Log the name of the config file, so if there is a problem processing it, you will know the name of the file
     log.info(s"Loading config file '$configFilePath'")
@@ -22,7 +23,7 @@ object CloudDataAccessClient {
 
     // Moved processConfig() outside of TableReader, parsing it is an unnecessary responsibility of the TableReader
     val tableReader = new TableReader(clientConfig)
-    tableReader.run()
+    tableReader.run(singleTableValue)
   }
 
 }

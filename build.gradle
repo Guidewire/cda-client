@@ -30,6 +30,9 @@ dependencies {
   implementation "com.amazonaws:aws-java-sdk-s3:$awsSDKVersion"
   implementation "org.apache.commons:commons-lang3:$apacheCommonsVersion"
   implementation "org.rogach:scallop_$scalaVersion:$scallopVersion"
+  implementation "com.microsoft.sqlserver:mssql-jdbc:$sqlserverVersion"
+  implementation "org.postgresql:postgresql:$postgresqlVersion"
+  implementation "com.oracle.jdbc:ojdbc8:$oracleVersion"
 }
 
 wrapper {

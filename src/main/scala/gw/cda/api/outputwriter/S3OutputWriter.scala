@@ -4,11 +4,13 @@ import java.io.FileNotFoundException
 
 import com.amazonaws.services.s3.AmazonS3URI
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
+import com.guidewire.cda.config.ClientConfig
 import gw.cda.api.utils.S3ClientSupplier
 import org.apache.hadoop.fs.FileAlreadyExistsException
 
 private[outputwriter] class S3OutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
-                                           override val saveAsSingleFileCSV: Boolean, override val saveIntoTimestampDirectory: Boolean) extends OutputWriter {
+                                           override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
+                                           override val clientConfig: ClientConfig) extends OutputWriter {
 
   val outputURI = new AmazonS3URI(outputPath)
 
