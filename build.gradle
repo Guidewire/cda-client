@@ -32,7 +32,7 @@ dependencies {
   implementation "org.rogach:scallop_$scalaVersion:$scallopVersion"
   implementation "com.microsoft.sqlserver:mssql-jdbc:$sqlserverVersion"
   implementation "org.postgresql:postgresql:$postgresqlVersion"
-  implementation "com.github.noraui:ojdbc8:$oracleVersion"
+  implementation "com.oracle.database.jdbc:ojdbc8:$oracleVersion"
 }
 
 wrapper {
