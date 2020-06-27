@@ -24,7 +24,6 @@ import org.apache.spark.sql.SparkSession
 
 case class OutputWriterConfig(outputPath: String, includeColumnNames: Boolean, saveAsSingleFile: Boolean, saveIntoTimestampDirectory: Boolean, clientConfig: ClientConfig)
 
-
 trait OutputWriter {
 
   private val log = LogManager.getLogger
@@ -36,6 +35,13 @@ trait OutputWriter {
   val saveAsSingleFile: Boolean
   val saveIntoTimestampDirectory: Boolean
   val clientConfig: ClientConfig
+
+  object JdbcWriteType extends Enumeration {
+    type JdbcWriteType = Value
+
+    val Raw = Value("Raw")
+    val Merged = Value("Merged")
+  }
 
   /** Validate the outputPath, making sure that it exists/is a valid directory.
    * If there is a problem, throw an exception.
@@ -73,18 +79,76 @@ trait OutputWriter {
       }
     }
 
-    // Process JdbcRaw write.
-    if (clientConfig.outputSettings.saveIntoJdbcRaw) {
-      log.info(s"***Writing '$tableName' raw data as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-      this.writeJdbcRaw(tableDataFrameWrapperForMicroBatch)
-      log.info(s"***Wrote '$tableName' raw data as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-    }
-
-    // Process JdbcMerged write.
-    if (clientConfig.outputSettings.saveIntoJdbcMerged) {
-      log.info(s"+++Merging '$tableName' data as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
-      this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch)
-      log.info(s"+++Merged '$tableName' data as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+    if (clientConfig.outputSettings.saveIntoJdbcRaw && clientConfig.outputSettings.saveIntoJdbcMerged) {
+      // If we are saving to both raw and merged datasets then we need to commit and rollback the
+      // connections together since they share a common savevpoint.  If either fail then we need to
+      // rollback both connections to keep them in sync.
+      val rawConn = DriverManager.getConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
+      rawConn.setAutoCommit(false) // Everything in the same db transaction.
+      val mergedConn = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
+      mergedConn.setAutoCommit(false)
+      try {
+        this.writeJdbcRaw(tableDataFrameWrapperForMicroBatch, rawConn)
+      } catch {
+        case e: Exception =>
+          rawConn.rollback()
+          rawConn.close()
+          log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+          mergedConn.close()
+          throw e
+      }
+      try {
+        this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch, mergedConn)
+      } catch {
+        case e: Exception =>
+          rawConn.rollback()
+          rawConn.close()
+          log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+          mergedConn.rollback()
+          mergedConn.close()
+          log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+          throw e
+      }
+      // Commit both connections.
+      rawConn.commit()
+      mergedConn.commit()
+      // Close both connections.
+      rawConn.close()
+      mergedConn.close()
+    } else {
+      if (clientConfig.outputSettings.saveIntoJdbcRaw) {
+        // Processing raw dataset only.
+        val rawConn = DriverManager.getConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
+        rawConn.setAutoCommit(false)
+        try {
+          this.writeJdbcRaw(tableDataFrameWrapperForMicroBatch, rawConn)
+        } catch {
+          case e: Exception =>
+            rawConn.rollback()
+            rawConn.close()
+            log.info(s"Raw - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+            throw e
+        }
+        rawConn.commit()
+        rawConn.close()
+      } else {
+        if (clientConfig.outputSettings.saveIntoJdbcMerged) {
+          // Processing merged dataset only.
+          val mergedConn = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
+          mergedConn.setAutoCommit(false) // Everything in the same db transaction.
+          try {
+            this.writeJdbcMerged(tableDataFrameWrapperForMicroBatch, mergedConn)
+          } catch {
+            case e: Exception =>
+              mergedConn.rollback()
+              mergedConn.close()
+              log.info(s"Merged - ROLLBACK '$tableName' for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} - $e - ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+              throw e
+          }
+          mergedConn.commit()
+          mergedConn.close()
+        }
+      }
     }
   }
 
@@ -129,122 +193,113 @@ trait OutputWriter {
    *
    * @param tableDataFrameWrapperForMicroBatch has the data to be written
    */
-  private def writeJdbcRaw(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
+  private def writeJdbcRaw(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
 
     val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
+    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
 
-    // Determine if we need to create indexes by checking if the table already exists.
-    val connection = DriverManager.getConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
+    log.info(s"***Writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+
+    val InsertDF = tableDataFrameWrapperForMicroBatch.dataFrame
+    InsertDF.cache()
+
+    // Determine if we need to create the table by checking if the table already exists.
+    val url = clientConfig.jdbcConnectionRaw.jdbcUrl
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(null, null, tableName, null)
-    val needsIndexes = !tables.next
 
-    // Insert the records and create the table if it does not exist.
-    tableDataFrameWrapperForMicroBatch.dataFrame.write
-      .format("jdbc")
-      .mode(clientConfig.jdbcConnectionRaw.jdbcSaveMode.toLowerCase)
-      .option("url", clientConfig.jdbcConnectionRaw.jdbcUrl)
-      .option("dbtable", tableName)
-      .option("user", clientConfig.jdbcConnectionRaw.jdbcUsername)
-      .option("password", clientConfig.jdbcConnectionRaw.jdbcPassword)
-      .save()
+    val tables = dbm.getTables(connection.getCatalog(), null, tableNameNoSchema, Array("TABLE"))
+    val tableExists = tables.next()
 
-    // Create indexes for table PKs and AKs. Need case logic for different DBs.
-    if (needsIndexes) {
-      createIndexes(connection, clientConfig.jdbcConnectionRaw.jdbcUrl, tableName)
+    // Get some data we will need for later.
+    val dbProductName = dbm.getDatabaseProductName
+    val dialect = JdbcDialects.get(url)
+    val insertSchema = InsertDF.schema
+    val batchSize = 5000 // consider making this configurable.
+
+    // Create the table if it does not already exist.
+    if (!tableExists) {
+      // Build create table statement.
+      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableNameNoSchema, JdbcWriteType.Raw, dbProductName)
+      // Execute the table create DDL
+      val stmt = connection.createStatement
+      log.info(s"Raw - $createTableDDL")
+      stmt.execute(createTableDDL)
+      stmt.close()
+      // Create table indexes for the new table.
+      createIndexes(connection, url, tableName, JdbcWriteType.Raw)
+      connection.commit()
     }
 
-    connection.close()
+    // Build the insert statement.
+    val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
+    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
+    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
+    log.info(s"Raw - $insertStatement")
+
+    // Prepare and execute one insert statement per row in our insert dataframe.
+    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect)
+
+    log.info(s"**Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
   }
 
   /**
-   *
    * @param connection database connection
    * @param url used to determine db platform
    * @param tableName name of the table without the schema prefix
+   * @param jdbcWriteType indicates Raw or Merged data write type
    */
-  private def createIndexes(connection: Connection, url: String, tableName: String): Unit = {
+  private def createIndexes(connection: Connection, url: String, tableName: String, jdbcWriteType: JdbcWriteType.Value): Unit = {
     val stmt = connection.createStatement
-    val tableNameNoSchema = tableName.substring(tableName.indexOf(".")+1)
-    if (url.toLowerCase.contains("sqlserver")) {
+    val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
+    if (url.toLowerCase.contains("sqlserver") || url.toLowerCase.contains("postgresql") || url.toLowerCase.contains("oracle")) {
 
-      // We can't create unique constraints because all columns are nullable by CDA definition.
-      //We will need to add another param to distinguish between Raw and Merged data once we are able to create PKs.  They will be different for each.
-      //val ddlPk = "alter table " + tableNameNoSchema + " add constraint " + tableNameNoSchema + "_pk primary key nonclustered (gwcbi___seqval_hex)"
-      //log.info(ddlPk)
-      //stmt.execute(ddlPk)
-      val ddlIdx1 = "create index " + tableNameNoSchema + "_idx1 on " + tableName + " (\"id\")"
-      log.info(ddlIdx1)
-      stmt.execute(ddlIdx1)
-      // Not able able to index nvarchar(max) columns on sql server.
-      /**
-      val ddlIdx2 =
-        if (tableName contains "pctl_") {
-        "create nonclustered index " + tableNameNoSchema + "_idx2 on " + tableNameNoSchema + " (typecode)"
-      } else {
-        "create nonclustered index " + tableNameNoSchema + "_idx2 on " + tableNameNoSchema + " (publicid)"
+      // Create primary key.
+      var ddlPK = "ALTER TABLE " + tableNameNoSchema + " ADD CONSTRAINT " + tableNameNoSchema + "_pk PRIMARY KEY "
+      if (jdbcWriteType == JdbcWriteType.Merged) {
+        ddlPK = ddlPK + "(id)"
       }
-      log.info(ddlIdx2)
-      stmt.execute(ddlIdx2)
-       */
+      else {
+        ddlPK = ddlPK + "(id, gwcbi___seqval_hex)"
+      }
+      log.info(s"$jdbcWriteType - $ddlPK")
+      stmt.execute(ddlPK)
+
+      // Create alternate keys for Merged data.  Raw data will not have any alternate keys since columns other than
+      // the PK can be null (due to records for deletes).
+      if (jdbcWriteType == JdbcWriteType.Merged) {
+        var ddlAK1 = "ALTER TABLE " + tableNameNoSchema + " ADD CONSTRAINT " + tableNameNoSchema + "_ak1 UNIQUE "
+        if (tableNameNoSchema.startsWith("pctl_") || tableNameNoSchema.startsWith("cctl_") || tableNameNoSchema.startsWith("bctl_") || tableNameNoSchema.startsWith("abtl_")) {
+          ddlAK1 = ddlAK1 + "(typecode)"
+        }
+        else {
+          ddlAK1 = ddlAK1 + "(publicid)"
+        }
+        log.info(s"$jdbcWriteType - $ddlAK1")
+        stmt.execute(ddlAK1)
+      }
 
     } else {
-      if (url.toLowerCase.contains("postgresql")) {
-        // We can't create unique constraints because all columns are nullable by CDA definition.
-        //We will need to add another param to distinguish between Raw and Merged data once we are able to create PKs.  They will be different for each.
-        //val ddlPk = "create unique index " + tableName + "_pk on " + tableName + " (gwcbi___seqval_hex)"
-        //log.info(ddlPk)
-        //stmt.execute(ddlPk)
-        val ddlIdx1 = "create index " + tableNameNoSchema + "_idx1 on " + tableName + " (\"id\")"
-        log.info(ddlIdx1)
-        stmt.execute(ddlIdx1)
-        // Not able able to index nvarchar(max) columns on sql server.
-        /**
-        val ddlIdx2 =
-        if (tableName contains "pctl_") {
-        "create  index " + tableName + "_idx1 on " + tableName + " (typecode)"
-      } else {
-        "create  index " + tableName + "_idx1 on " + tableName + " (publicid)"
-      }
-      log.info(ddlIdx2)
-      stmt.execute(ddlIdx2)
-         */
-      } else {
-        if (url.toLowerCase.contains("oracle")) {
-          // We can't create unique constraints because all columns are nullable by CDA definition.
-          //We will need to add another param to distinguish between Raw and Merged data once we are able to create PKs.  They will be different for each.
-          //val ddlPk = "create unique index " + tableName + "_pk on " + tableName + "(ID asc) nologging parallel"
-          //log.info(ddlPk)
-          //stmt.execute(ddlPk)
-          val ddlIdx1 = "create index " + tableNameNoSchema + "_idx1 on " + tableName + " (\"id\")"
-          log.info(ddlIdx1)
-          stmt.execute(ddlIdx1)
-          // Need to see if we can do this in oracle....not sure of the datatypes.
-          /**
-          val ddlIdx2 =
-        if (tableName contains "pctl_") {
-        "create index " + tableName + "_idx2 on " + tableName + " (typecode asc) nologging parallel"
-      } else {
-         "create index " + tableName + "_idx2 on " + tableName + " (publicid asc) nologging parallel"
-      }
-      log.info(ddlIdx2)
-      stmt.execute(ddlIdx2)
-           */
-        } else
-          log.info(s"Unsupported database.  $url. Indexes were not created.")
-      }
+      log.info(s"Unsupported database.  $url. Indexes were not created.")
+      stmt.close()
+      throw new SQLException(s"Unsupported database platform: $url")
+     }
+
       stmt.close()
     }
-  }
 
   /** Merge the raw transactions into a JDBC target database applying the inserts/updates/deletes
-   *  according to transactions in the raw CDC data.
+   * according to transactions in the raw CDC data.
    *
    * @param tableDataFrameWrapperForMicroBatch has the data to be written
    */
-  private def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
+  private def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
+
+    log.info(s"+++Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
 
     val tableName = clientConfig.jdbcConnectionMerged.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
+    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
+
+    tableDataFrameWrapperForMicroBatch.dataFrame.cache()
 
     // Get list of CDA internal use columns to get rid of.
     val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
@@ -256,36 +311,53 @@ trait OutputWriter {
     // Filter for records to insert and drop unwanted columns.
     val InsertDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(2, 0))
       .drop(dropList: _*)
+      .cache()
 
     // Log total rows to be inserted for this fingerprint.
     val insCnt = InsertDF.count()
     log.info(s"$tableName insert cnt after filter: ${insCnt.toString}")
 
-    // Determine if we need to create indexes by checking if the table already exists.
-    val connection = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
+    // Determine if we need to create the table by checking if the table already exists.
+    val url = clientConfig.jdbcConnectionMerged.jdbcUrl
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(null, null, tableName, null)
-    val needsIndexes = !tables.next
+    val tables = dbm.getTables(connection.getCatalog(), null, tableNameNoSchema,  Array("TABLE"))
+    val tableExists = tables.next
 
-    // Insert the records.
-    InsertDF.write
-      .format("jdbc")
-      .mode("append")
-      .option("url", clientConfig.jdbcConnectionMerged.jdbcUrl)
-      .option("dbtable", tableName)
-      .option("user", clientConfig.jdbcConnectionMerged.jdbcUsername)
-      .option("password", clientConfig.jdbcConnectionMerged.jdbcPassword)
-      .save()
+    // Get some data we will need for later.
+    val dbProductName = dbm.getDatabaseProductName
+    val dialect = JdbcDialects.get(url)
+    val insertSchema = InsertDF.schema
+    val batchSize = 5000 // consider making this configurable.
 
-    InsertDF.unpersist(true)
+    // Create the table if it does not already exist. Need case logic for different DB data types.
+    if (!tableExists) {
+      // Build create table statement.
+      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Merged, dbProductName)
+      log.info(s"Merged - $createTableDDL")
+      // Execute the table create DDL
+      val stmt = connection.createStatement
+      stmt.execute(createTableDDL)
+      stmt.close()
 
-    // Create indexes for table PKs and AKs. Need case logic for different DBs.
-    if (needsIndexes) {
-      createIndexes(connection, clientConfig.jdbcConnectionMerged.jdbcUrl, tableName)
+      // Create table indexes for the new table.
+      createIndexes(connection, url, tableName, JdbcWriteType.Merged)
+      connection.commit()
     }
+
+    // Build the insert statement.
+    val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
+    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
+    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
+    log.info(s"Merged - $insertStatement")
+
+    // Prepare and execute one insert statement per row in our insert dataframe.
+    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect)
+
+    InsertDF.unpersist()
 
     // Filter for records to update.
     val UpdateDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(4))
+      .cache()
 
     // Log total rows marked as updates.
     val UpdCnt = UpdateDF.count()
@@ -312,7 +384,7 @@ trait OutputWriter {
           .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
           .selectExpr("latest.*", "id")
           .drop(dropList: _*)
-          .coalesce(1) // multiple partitions can cause deadlocks.  need to look into different isolation levels maybe.
+          .cache()
       } else {
         // Retain all updates.  Sort so they are applied in the correct order.
         val colVar = colNamesString + ",id"
@@ -320,8 +392,9 @@ trait OutputWriter {
           .selectExpr(colVar.split(","): _*)
           .sort(col("gwcbi___seqval_hex").asc)
           .drop(dropList: _*)
-          .coalesce(1) // multiple partitions can cause deadlocks.  need to look into different isolation levels maybe.
+          .cache()
       }
+      UpdateDF.unpersist()
 
       val latestUpdCnt = latestChangeForEachID.count()
       if (clientConfig.jdbcConnectionMerged.jdbcApplyLastestUpdatesOnly) {
@@ -330,7 +403,6 @@ trait OutputWriter {
       } else {
         log.info(s"$tableName applying all updates in order: ${latestUpdCnt.toString}")
       }
-      UpdateDF.unpersist()
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
@@ -338,22 +410,12 @@ trait OutputWriter {
       val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE id = ?"
       log.info(s"$tableName Update Stmt: $updateStatement")
 
-      // Get inputs required for updatePartition call.
-      val rddSchema = latestChangeForEachID.schema
-      val dialect = JdbcDialects.get(clientConfig.jdbcConnectionMerged.jdbcUrl)
-      val batchSize = 1000 //maybe make this configurable.
+      // Get schema info required for updatePartition call.
+      val updateSchema = latestChangeForEachID.schema
 
-      // Need to determine optimal number of partitions (set above).
-      // All records in each partition are updated in a single transaction
-      // if the database supports transactions.  Maybe make configurable.
-      // Also consider applying commits once for each batchsize of records.
-      latestChangeForEachID.foreachPartition { partition =>
-        // Note : One connection per partition (better way may be to use connection pools).
-        val sqlExecutorConnection: Connection = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl,
-          clientConfig.jdbcConnectionMerged.jdbcUsername,
-          clientConfig.jdbcConnectionMerged.jdbcPassword)
-        updatePartition(sqlExecutorConnection, tableName, partition, rddSchema, updateStatement, batchSize, dialect)
-      }
+      // Prepare and execute one update statement per row in our update dataframe.
+      updateDataframe(connection, tableName, latestChangeForEachID, updateSchema, updateStatement, batchSize, dialect)
+
       latestChangeForEachID.unpersist()
     }
 
@@ -361,7 +423,7 @@ trait OutputWriter {
     // Deletes should be relatively rare since most data is retired in InsuranceSuite rather than deleted.
     val DeleteDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(1))
       .selectExpr("id")
-      .coalesce(1)
+      .cache()
 
     // Log number of records to be deleted.
     val delCnt = DeleteDF.count()
@@ -369,57 +431,64 @@ trait OutputWriter {
 
     // Generate and apply delete statements.
     if (delCnt > 0) {
-      //val rddSchema = StructType(List(StructField("id",LongType,nullable = true)))
-      val rddSchema = DeleteDF.schema
-      val dialect = JdbcDialects.get(clientConfig.jdbcConnectionMerged.jdbcUrl)
-      val batchSize = 1000 //maybe make this configurable.
+      val deleteSchema = DeleteDF.schema
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
       val deleteStatement = "DELETE FROM " + tableName + " WHERE id = ?"
       log.info(deleteStatement)
-      DeleteDF.foreachPartition { partition =>
-        // Note : Once connection per partition (better way may be to use connection pools).
-        val sqlExecutorConnection2: Connection = DriverManager.getConnection(clientConfig.jdbcConnectionMerged.jdbcUrl,
-          clientConfig.jdbcConnectionMerged.jdbcUsername,
-          clientConfig.jdbcConnectionMerged.jdbcPassword)
-        updatePartition(sqlExecutorConnection2, tableName, partition, rddSchema, deleteStatement, batchSize, dialect)
-      }
+
+      // Prepare and execute one delete statement per row in our delete dataframe.
+      updateDataframe(connection, tableName, DeleteDF, deleteSchema, deleteStatement, batchSize, dialect)
+
+      tableDataFrameWrapperForMicroBatch.dataFrame.unpersist()
       DeleteDF.unpersist()
+
+      log.info(s"+++Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
     }
   }
 
-  /**
-   *  Generate prepared sql statements and populate parameters.
-   *
-   * @param conn is the database connection
-   * @param table is the table name
-   * @param iterator contains the rows to be updated
-   * @param rddSchema has the schema definition for data set from which parameters will be derived.
-   * @param updateStmt is the string to be prepared as the DML statement
-   * @param batchSize is the number of statements to be submitted in each batch.
-   * @param dialect is the JdbcDialect based on the connection url.
-   */
-  private def updatePartition(conn: Connection,
+  def getTableCreateDDL( dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
+    val sb = new StringBuilder()
+    // Define specific columns we want to set as NOT NULL. Everything coming out of CDA parquet files is defined as nullable so
+    // we do this to ensure there are columns available to set as PKs and/or AKs.
+    var notNullCols = List("id", "gwcbi___operation", "gwcbi___seqval_hex")
+    if (jdbcWriteType == JdbcWriteType.Merged) {
+      // For merged data, include publicid in list of not null columns.
+      notNullCols = notNullCols ++ List("publicid","retired","typecode")
+    }
+    // We will explicitly set the data type for string data to avoid nvarchar(max) and varchar2 types that are potentially too short.
+    // nvarchar(max) columns can't be indexed.
+    val stringDataType = dbProductName match {
+      case "Microsoft SQL Server" => "VARCHAR(1333)"
+      case "PostgreSQL" => "VARCHAR(1333)"
+      case "Oracle" => "VARCHAR2(1333)"
+      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
+    // Build the list of columns in alphabetic order.
+    schema.fields.sortBy(f => f.name).foreach { field =>
+      val name = dialect.quoteIdentifier(field.name)
+      val typ = if (field.dataType == StringType) stringDataType else getJdbcType(field.dataType, dialect).databaseTypeDefinition
+      val nullable = if (notNullCols.contains(field.name) || !field.nullable) "NOT NULL" else ""
+      sb.append(s"$name $typ $nullable, ")
+    }
+    // Remove the trailing comma.
+    val colsForCreateDDL = sb.stripSuffix(", ")
+    // Build and return the final create table statement.
+    s"CREATE TABLE $tableName ($colsForCreateDDL)"
+  }
+
+  private def updateDataframe(conn: Connection,
                               table: String,
-                              iterator: Iterator[Row],
+                              df: DataFrame,
                               rddSchema: StructType,
                               updateStmt: String,
                               batchSize: Int,
                               dialect: JdbcDialect
                              ): Unit = {
 
-    var committed = false
-
-    val supportsTransactions = conn.getMetaData.supportsTransactions()
-    if (supportsTransactions) {
-      conn.setAutoCommit(false) // Everything in the same db transaction.
-    }
-
+    var completed = false
     var totalRowCount = 0L
     try {
-      if (supportsTransactions) {
-        conn.setAutoCommit(false) // Everything in the same db transaction.
-      }
-      val stmt = conn.prepareStatement(updateStmt)
+      val  stmt = conn.prepareStatement(updateStmt)
       val setters = rddSchema.fields.map(f => makeSetter(conn, dialect, f.dataType))
       val nullTypes = rddSchema.fields.map(f => getJdbcType(f.dataType, dialect).jdbcNullType)
       val numFields = rddSchema.fields.length
@@ -427,82 +496,64 @@ trait OutputWriter {
       try {
         var rowCount = 0
 
-        while (iterator.hasNext) {
-          //log.info("iterator.hasNext")
-          val row = iterator.next()
+        df.collect().foreach {row =>
           var i = 0
           while (i < numFields) {
             if (row.isNullAt(i)) {
-              //log.info("row.isNullAt(i) in ")
               stmt.setNull(i + 1, nullTypes(i))
-              //log.info("row.isNullAt(i) out ")
             } else {
-              //log.info("rsetters(i).apply(stmt, row, i) in ")
               setters(i).apply(stmt, row, i)
-              //log.info("rsetters(i).apply(stmt, row, i) out ")
             }
             i = i + 1
           }
-          //log.info("stmt.addBatch() in ")
           stmt.addBatch()
-          //log.info("stmt.addBatch() out ")
           rowCount += 1
-          //log.info(s"batch stmt added: ${rowCount.toString}")
           totalRowCount += 1
           if (rowCount % batchSize == 0) {
-            //log.info(s"executeBatch Start - ${rowCount.toString} rows - $updateStmt")
             stmt.executeBatch()
-            //log.info(s"executeBatch End - ${rowCount.toString} rows - $updateStmt")
+            log.info(s"executeBatch - ${rowCount.toString} rows - $updateStmt")
             rowCount = 0
           }
         }
+
         if (rowCount > 0) {
           //log.info(s"executeBatch Start - ${rowCount.toString} rows - $updateStmt")
           stmt.executeBatch()
-          //log.info(s"executeBatch End - ${rowCount.toString} rows - $updateStmt")
+          log.info(s"executeBatch - ${rowCount.toString} rows - $updateStmt")
         }
       } finally {
         stmt.close()
       }
-      if (supportsTransactions) {
-        conn.commit()
-      }
-      committed = true
+      completed = true
     } catch {
       case e: SQLException =>
-        log.info(s"Catch exception for $table")
-        val cause = e.getNextException
-        if (cause != null && e.getCause != cause) {
+        //log.info(s"Catch exception for $table - $updateStmt")
+        val cause = e.getCause
+        val nextcause = e.getNextException
+        if (nextcause != null && cause != nextcause) {
           // If there is no cause already, set 'next exception' as cause. If cause is null,
           // it *may* be because no cause was set yet
-          if (e.getCause == null) {
+          if (cause == null) {
             try {
-              e.initCause(cause)
+              e.initCause(nextcause)
             } catch {
               // Or it may be null because the cause *was* explicitly initialized, to *null*,
               // in which case this fails. There is no other way to detect it.
               // addSuppressed in this case as well.
-              case _: IllegalStateException => e.addSuppressed(cause)
+              case _: IllegalStateException => e.addSuppressed(nextcause)
             }
           } else {
-            e.addSuppressed(cause)
+            e.addSuppressed(nextcause)
           }
         }
+        throw e
     } finally {
-      if (!committed) {
+      if (!completed) {
         // The stage must fail.  We got here through an exception path, so
-        // let the exception through unless rollback() or close() want to
-        // tell the user about another problem.
-        if (supportsTransactions) {
-          log.info(s"Rollback for $table")
-          conn.rollback()
-        } else {
-          log.info(s"Total rows updated in partition for $table: $totalRowCount")
-        }
-        conn.close()
+        // let the exception through and tell the user about another problem.
+          log.info(s"Update failed for $table - $updateStmt")
       } else {
-        log.info(s"Total rows updated in partition for $table: $totalRowCount")
-        conn.close()
+        log.info(s"Total rows updated for $table: $totalRowCount rows - $updateStmt")
       }
     }
   }
@@ -610,14 +661,14 @@ trait OutputWriter {
    * @param user database user name
    * @param pswd database password
    * @parm spark is the spark session.
-   * @param excludeInternalColumns indicates wether or not to exclude internal 'gwcbi__' columns
+   * @param jdbcWriteType Merge vs Raw to determine exclusion of internal 'gwcbi__' columns
    *                               when comparing schemas.  When merging data we remove those columns
    *                               from the data set before saving the data so we don't want to check
    *                               for them when comparing to the schema definition in the database.
    * @return Boolean indicating if the table schema definition is the same as the parquet file schema definition
    */
   def schmasAreConsistent(dataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
-                          user: String, pswd: String, spark: SparkSession, excludeInternalColumns: Boolean): Boolean = {
+                          user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
 
     if (tableExists(tableName, url, user, pswd)) {
       //build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
@@ -629,33 +680,50 @@ trait OutputWriter {
         .option("user", user)
         .option("password", pswd)
         .load()
-      val tableSchemaDef = jdbcDF.schema.toList
-      val dfSchemaDef = if (excludeInternalColumns) {
-        dataFrame.schema.filterNot(_.name.toLowerCase.startsWith("gwcbi___"))
+
+      val dialect = JdbcDialects.get(url)
+
+      // Derive the product name from the url to avoid having to create or pass in a connection
+      // to access the metadata object.
+      val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
+        "Microsoft SQL Server"}
+      else { if (url.toLowerCase.contains("postgresql")) {
+        "PostgreSQL"}  else {
+        if (url.toLowerCase.contains("oracle")) {
+        "Oracle"} }}
+
+      // Generate the table create ddl statement based on the schema definition of the database table.
+      val dbDDL = getTableCreateDDL(dialect, jdbcDF.schema, tableName, jdbcWriteType, dbProductName.toString)
+
+      // Get the schema definition for the data read from the parquet file.
+      val dfSchemaDef  = if (jdbcWriteType == JdbcWriteType.Merged) {
+       val dropList = dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
+       dataFrame.drop(dropList: _*).schema
       } else {
-        dataFrame.schema.toList
+        dataFrame.schema
       }
-      if(tableSchemaDef==dfSchemaDef) {
+
+      // Build the create ddl statement based on the data read from the parquet file.
+      val dfDDL = getTableCreateDDL(dialect, dfSchemaDef, tableName, jdbcWriteType, dbProductName.toString)
+
+      // Compare the two table definitons and log warnings if they do not match.
+      if(dbDDL==dfDDL) {
         //log.info(s"File schema MATCHES Table schema")
         true
       } else {
-        val jdbcType = if (excludeInternalColumns) {
-          "Merged" }
-        else {
-          "Raw"
-        }
+
         val logMsg = (s"""
-                         |
-                         | $jdbcType table definition for '$tableName' does not match parquet fingerprint '$schemaFingerprint'.  Bypassing updates for fingerprint $schemaFingerprint.
-                         |
-                         | $tableName $jdbcType DB Table Schema:
-                         | ${"-" * (tableName.length + jdbcType.length + 18)}
-                         | ${tableSchemaDef.toString.replace("StructField","").stripPrefix("List(").stripSuffix(")")}
-                         |
-                         | $tableName Parquet Schema for Fingerprint $schemaFingerprint:
-                         | ${"-" * (tableName.length + schemaFingerprint.length + 33)}
-                         | ${dfSchemaDef.toString.replace("StructField","").stripPrefix("List(").stripSuffix(")")}
-                         |""")
+  |
+  | $jdbcWriteType table definition for '$tableName' does not match parquet fingerprint '$schemaFingerprint'.  Bypassing updates for fingerprint $schemaFingerprint.
+  |
+  | $tableName $jdbcWriteType DB Table Schema:
+  | ${"-" * (tableName.length + jdbcWriteType.toString.length + 18)}
+  | ${dbDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
+  |
+  | $tableName Parquet Schema for Fingerprint $schemaFingerprint:
+  | ${"-" * (tableName.length + schemaFingerprint.length + 33)}
+  | ${dfDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
+  |""")
         log.warn(logMsg)
         false
       }
@@ -668,7 +736,7 @@ trait OutputWriter {
   def tableExists(tableName: String, url: String, user: String, pswd: String): Boolean = {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(null, null, tableName, null)
+    val tables = dbm.getTables(connection.getCatalog(), null, tableName, Array("TABLE"))
     if (tables.next) {
       connection.close()
       true
@@ -678,7 +746,6 @@ trait OutputWriter {
     }
 
   }
-
 
   /**
     * Converts the nested column values into a string for type StructType
