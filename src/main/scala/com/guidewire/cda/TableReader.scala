@@ -180,12 +180,21 @@ class TableReader(clientConfig: ClientConfig) {
         // Define the job to run, using a closure
         val runnableJob = new Runnable {
           override def run(): Unit = {
+            var completed = false
             try {
               log.info(s"Copy Job is starting for '$tableName' for fingerprint '$schemaFingerprint'")
               copyTableFingerprintPairJob(tableName, schemaFingerprint, copyJobs.get((tableName, schemaFingerprint)), manifestMap, savepointsProcessor, outputWriter)
+              completed = true
+            }
+            catch  {
+              case e : Throwable =>
+                log.warn(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e")
+                //log.warn(e)
             }
             finally {
-              log.info(s"Copy Job is complete for '$tableName' for fingerprint '$schemaFingerprint'; completed: ${completedNumberOfTableFingerprintPairs.incrementAndGet()} of $totalNumberOfTableFingerprintPairs tables")
+              if (completed) {
+                log.info(s"Copy Job is complete for '$tableName' for fingerprint '$schemaFingerprint'; completed: ${completedNumberOfTableFingerprintPairs.incrementAndGet()} of $totalNumberOfTableFingerprintPairs tables")
+              }
               semaphore.release()
             }
           }
@@ -257,7 +266,7 @@ class TableReader(clientConfig: ClientConfig) {
         // this fingerprint to any of the target types.
         val jdbcRawIsOk =  if (clientConfig.outputSettings.saveIntoJdbcRaw) {
           if (outputWriter.schmasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
-            clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, false)) {
+            clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, outputWriter.JdbcWriteType.Raw)) {
             true
           } else {
             false
@@ -268,7 +277,7 @@ class TableReader(clientConfig: ClientConfig) {
 
         val jdbcMergedIsOk = if (clientConfig.outputSettings.saveIntoJdbcMerged) {
           if (outputWriter.schmasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionMerged.jdbcSchema, tableName, schemaFingerprint,
-            clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword, spark, true)) {
+            clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword, spark, outputWriter.JdbcWriteType.Merged)) {
             true
           } else {
             //log.warn(s"Merged data table definition for '$tableName' does not match fingerprint ${schemaFingerprint}.  Bypassing updates for fingerprint ${schemaFingerprint}.")
@@ -288,7 +297,7 @@ class TableReader(clientConfig: ClientConfig) {
             manifestTimestampForTable, dataFrameForTable)
           outputWriter.write(tableDataFrameWrapperForMicroBatch)
           val fullWriteTime = tableStopwatch.getTime - startWriteTime
-          log.info(s"Wrote file(s) for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullWriteTime / 1000.0).toString} seconds")
+          log.info(s"Wrote data for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullWriteTime / 1000.0).toString} seconds")
 
           // Savepoints update with the manifest timestamp, since that is the data we copied
           //savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
@@ -314,8 +323,8 @@ class TableReader(clientConfig: ClientConfig) {
             val bypassedFingerprintsList = fingerprintsAfterCurrent
               .map({ case (schemaFingerprint, _) => schemaFingerprint })
             log.warn(s"""
-                        | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
-                        |   Only one fingerprint per table can be processed at a time.""")
+  | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
+  |   Only one fingerprint per table can be processed at a time.""")
           }
 
           // Get the timestamp of the next fingerprint.
