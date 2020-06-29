@@ -198,7 +198,7 @@ trait OutputWriter {
     val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
     val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
 
-    log.info(s"***Writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+    log.info(s"*** Writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
 
     val InsertDF = tableDataFrameWrapperForMicroBatch.dataFrame
     InsertDF.cache()
@@ -207,7 +207,7 @@ trait OutputWriter {
     val url = clientConfig.jdbcConnectionRaw.jdbcUrl
     val dbm = connection.getMetaData
 
-    val tables = dbm.getTables(connection.getCatalog(), null, tableNameNoSchema, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameNoSchema, Array("TABLE"))
     val tableExists = tables.next()
 
     // Get some data we will need for later.
@@ -219,7 +219,7 @@ trait OutputWriter {
     // Create the table if it does not already exist.
     if (!tableExists) {
       // Build create table statement.
-      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableNameNoSchema, JdbcWriteType.Raw, dbProductName)
+      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Raw, dbProductName)
       // Execute the table create DDL
       val stmt = connection.createStatement
       log.info(s"Raw - $createTableDDL")
@@ -237,9 +237,9 @@ trait OutputWriter {
     log.info(s"Raw - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect)
+    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw)
 
-    log.info(s"**Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+    log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
   }
 
   /**
@@ -254,7 +254,7 @@ trait OutputWriter {
     if (url.toLowerCase.contains("sqlserver") || url.toLowerCase.contains("postgresql") || url.toLowerCase.contains("oracle")) {
 
       // Create primary key.
-      var ddlPK = "ALTER TABLE " + tableNameNoSchema + " ADD CONSTRAINT " + tableNameNoSchema + "_pk PRIMARY KEY "
+      var ddlPK = "ALTER TABLE " + tableName + " ADD CONSTRAINT " + tableNameNoSchema + "_pk PRIMARY KEY "
       if (jdbcWriteType == JdbcWriteType.Merged) {
         ddlPK = ddlPK + "(id)"
       }
@@ -267,7 +267,7 @@ trait OutputWriter {
       // Create alternate keys for Merged data.  Raw data will not have any alternate keys since columns other than
       // the PK can be null (due to records for deletes).
       if (jdbcWriteType == JdbcWriteType.Merged) {
-        var ddlAK1 = "ALTER TABLE " + tableNameNoSchema + " ADD CONSTRAINT " + tableNameNoSchema + "_ak1 UNIQUE "
+        var ddlAK1 = "ALTER TABLE " + tableName + " ADD CONSTRAINT " + tableNameNoSchema + "_ak1 UNIQUE "
         if (tableNameNoSchema.startsWith("pctl_") || tableNameNoSchema.startsWith("cctl_") || tableNameNoSchema.startsWith("bctl_") || tableNameNoSchema.startsWith("abtl_")) {
           ddlAK1 = ddlAK1 + "(typecode)"
         }
@@ -294,7 +294,7 @@ trait OutputWriter {
    */
   private def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
 
-    log.info(s"+++Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+    log.info(s"+++ Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
 
     val tableName = clientConfig.jdbcConnectionMerged.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
     val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
@@ -306,7 +306,7 @@ trait OutputWriter {
 
     // Log total rows to be merged for this fingerprint.
     val totCnt = tableDataFrameWrapperForMicroBatch.dataFrame.count()
-    log.info(s"$tableName total cnt for ins/upd/del: ${totCnt.toString}")
+    log.info(s"Merged - $tableName total cnt for all ins/upd/del: ${totCnt.toString}")
 
     // Filter for records to insert and drop unwanted columns.
     val InsertDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(2, 0))
@@ -315,12 +315,12 @@ trait OutputWriter {
 
     // Log total rows to be inserted for this fingerprint.
     val insCnt = InsertDF.count()
-    log.info(s"$tableName insert cnt after filter: ${insCnt.toString}")
+    log.info(s"Merged - $tableName insert cnt after filter: ${insCnt.toString}")
 
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionMerged.jdbcUrl
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(connection.getCatalog(), null, tableNameNoSchema,  Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameNoSchema,  Array("TABLE"))
     val tableExists = tables.next
 
     // Get some data we will need for later.
@@ -329,7 +329,7 @@ trait OutputWriter {
     val insertSchema = InsertDF.schema
     val batchSize = 5000 // consider making this configurable.
 
-    // Create the table if it does not already exist. Need case logic for different DB data types.
+    // Create the table if it does not already exist.
     if (!tableExists) {
       // Build create table statement.
       val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Merged, dbProductName)
@@ -351,7 +351,7 @@ trait OutputWriter {
     log.info(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect)
+    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
 
     InsertDF.unpersist()
 
@@ -361,7 +361,7 @@ trait OutputWriter {
 
     // Log total rows marked as updates.
     val UpdCnt = UpdateDF.count()
-    log.info(s"$tableName update cnt after filter: ${UpdCnt.toString}")
+    log.info(s"Merged - $tableName update cnt after filter: ${UpdCnt.toString}")
 
     // Generate and apply update statements based on the latest transaction for each id.
     if (UpdCnt > 0) {
@@ -399,22 +399,22 @@ trait OutputWriter {
       val latestUpdCnt = latestChangeForEachID.count()
       if (clientConfig.jdbcConnectionMerged.jdbcApplyLastestUpdatesOnly) {
         // Log row count following the reduction to only last update for each id.
-        log.info(s"$tableName update cnt after agg to get latest for each id: ${latestUpdCnt.toString}")
+        log.info(s"Merged - $tableName update cnt after agg to get latest for each id: ${latestUpdCnt.toString}")
       } else {
-        log.info(s"$tableName applying all updates in order: ${latestUpdCnt.toString}")
+        log.info(s"Merged - $tableName all updates will be applied in sequence.")
       }
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
       val colNamesForSetClause = colListForSetClause.map(_ + " = ?").mkString(", ")
       val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE id = ?"
-      log.info(s"$tableName Update Stmt: $updateStatement")
+      log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
       val updateSchema = latestChangeForEachID.schema
 
       // Prepare and execute one update statement per row in our update dataframe.
-      updateDataframe(connection, tableName, latestChangeForEachID, updateSchema, updateStatement, batchSize, dialect)
+      updateDataframe(connection, tableName, latestChangeForEachID, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
 
       latestChangeForEachID.unpersist()
     }
@@ -427,23 +427,22 @@ trait OutputWriter {
 
     // Log number of records to be deleted.
     val delCnt = DeleteDF.count()
-    log.info(s"$tableName delete cnt after filter: ${delCnt.toString}")
+    log.info(s"Merged - $tableName delete cnt after filter: ${delCnt.toString}")
 
     // Generate and apply delete statements.
     if (delCnt > 0) {
       val deleteSchema = DeleteDF.schema
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
       val deleteStatement = "DELETE FROM " + tableName + " WHERE id = ?"
-      log.info(deleteStatement)
+      log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
-      updateDataframe(connection, tableName, DeleteDF, deleteSchema, deleteStatement, batchSize, dialect)
+      updateDataframe(connection, tableName, DeleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
 
       tableDataFrameWrapperForMicroBatch.dataFrame.unpersist()
       DeleteDF.unpersist()
-
-      log.info(s"+++Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
     }
+    log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
   }
 
   def getTableCreateDDL( dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
@@ -482,7 +481,8 @@ trait OutputWriter {
                               rddSchema: StructType,
                               updateStmt: String,
                               batchSize: Int,
-                              dialect: JdbcDialect
+                              dialect: JdbcDialect,
+                              jdbcWriteType: JdbcWriteType.Value
                              ): Unit = {
 
     var completed = false
@@ -511,15 +511,14 @@ trait OutputWriter {
           totalRowCount += 1
           if (rowCount % batchSize == 0) {
             stmt.executeBatch()
-            log.info(s"executeBatch - ${rowCount.toString} rows - $updateStmt")
+            log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
             rowCount = 0
           }
         }
 
         if (rowCount > 0) {
-          //log.info(s"executeBatch Start - ${rowCount.toString} rows - $updateStmt")
           stmt.executeBatch()
-          log.info(s"executeBatch - ${rowCount.toString} rows - $updateStmt")
+          log.info(s"$jdbcWriteType - executeBatch - ${rowCount.toString} rows - $updateStmt")
         }
       } finally {
         stmt.close()
@@ -551,9 +550,9 @@ trait OutputWriter {
       if (!completed) {
         // The stage must fail.  We got here through an exception path, so
         // let the exception through and tell the user about another problem.
-          log.info(s"Update failed for $table - $updateStmt")
+          log.info(s"$jdbcWriteType - Update failed for $table - $updateStmt")
       } else {
-        log.info(s"Total rows updated for $table: $totalRowCount rows - $updateStmt")
+        log.info(s"$jdbcWriteType - Total rows updated for $table: $totalRowCount rows - $updateStmt")
       }
     }
   }
@@ -706,7 +705,7 @@ trait OutputWriter {
       // Build the create ddl statement based on the data read from the parquet file.
       val dfDDL = getTableCreateDDL(dialect, dfSchemaDef, tableName, jdbcWriteType, dbProductName.toString)
 
-      // Compare the two table definitons and log warnings if they do not match.
+      // Compare the two table definitions and log warnings if they do not match.
       if(dbDDL==dfDDL) {
         //log.info(s"File schema MATCHES Table schema")
         true
@@ -736,7 +735,7 @@ trait OutputWriter {
   def tableExists(tableName: String, url: String, user: String, pswd: String): Boolean = {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(connection.getCatalog(), null, tableName, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableName, Array("TABLE"))
     if (tables.next) {
       connection.close()
       true
