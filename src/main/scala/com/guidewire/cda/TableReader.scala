@@ -150,7 +150,13 @@ class TableReader(clientConfig: ClientConfig) {
         .map({ case (tableName, manifestEntry) =>
           // For each entry in the manifestMap, map the table name to s3 url
           val baseUri = getTableS3BaseLocationFromManifestEntry(tableName, manifestEntry)
-          val fingerprintsWithUnprocessedRecords = getFingerprintsWithUnprocessedRecords(tableName, manifestEntry, savepointsProcessor)
+          val tmpFingerprintsWithUnprocessedRecords = getFingerprintsWithUnprocessedRecords(tableName, manifestEntry, savepointsProcessor)
+          val fingerprintsWithUnprocessedRecords: Iterable[String] =
+            if (clientConfig.outputSettings.saveIntoJdbcRaw || clientConfig.outputSettings.saveIntoJdbcMerged) {
+              // When saving to JDBC, we want to be sure we only return one fingerprint in each load to avoid schema conflict.
+              Seq(tmpFingerprintsWithUnprocessedRecords.iterator.next())
+            }
+             else {tmpFingerprintsWithUnprocessedRecords}
           TableS3BaseLocationWithFingerprintsWithUnprocessedRecords(tableName, baseUri, fingerprintsWithUnprocessedRecords)
         })
         // Map each table s3 url to all corresponding timestamp subfolder urls (with new data to copy)
@@ -346,9 +352,9 @@ class TableReader(clientConfig: ClientConfig) {
 
         //Stop the StopWatch, and print out the results
         tableStopwatch.stop()
-        log.info(s"Processed part of '$tableName' with fingerprint '$schemaFingerprint', took ${(tableStopwatch.getTime / 1000.0).toString} seconds")
+        log.info(s"Processed '$tableName' for fingerprint '$schemaFingerprint', took ${(tableStopwatch.getTime / 1000.0).toString} seconds")
       })
-      .getOrElse(log.info(s"Skipping part of '$tableName' with fingerprint '$schemaFingerprint' , no new data found"))
+      .getOrElse(log.info(s"Skipping '$tableName' for fingerprint '$schemaFingerprint', no new data found"))
   }
 
   /**
@@ -504,7 +510,7 @@ class TableReader(clientConfig: ClientConfig) {
    * @return Fingerprints for the table with records not yet processed.
    */
   private[cda] def getFingerprintsWithUnprocessedRecords(tableName: String, manifestEntry: ManifestEntry,
-                                                         savepointsProcessor: SavepointsProcessor): Iterable[String] = {
+                                                    savepointsProcessor: SavepointsProcessor): Iterable[String] = {
     val lastProcessedTimestamp: Long = savepointsProcessor.getSavepoint(tableName).map(_.toLong).getOrElse(-1)
     val fingerprintsSortedByTimestamp = manifestEntry.schemaHistory
       .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
@@ -520,12 +526,6 @@ class TableReader(clientConfig: ClientConfig) {
       // A fingerprint interval has unprocessed entries if we are inside it or it is further
       // along in time, i.e. the endpoint is further along than where we left off.
       .filter({ case (_, schemaEndTimestamp) => schemaEndTimestamp > lastProcessedTimestamp })
-      .map({ case (fingerprint, _) => fingerprint })
-      // To avoid schema conflict, we want to be sure we only
-      // return one fingerprint in each load.
-      .toList
-      .zipWithIndex
-      .filter{ case (_, index) => index == 0 }
       .map({ case (fingerprint, _) => fingerprint })
       .toSeq
   }
