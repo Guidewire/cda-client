@@ -256,10 +256,10 @@ trait OutputWriter {
       // Create primary key.
       var ddlPK = "ALTER TABLE " + tableName + " ADD CONSTRAINT " + tableNameNoSchema + "_pk PRIMARY KEY "
       if (jdbcWriteType == JdbcWriteType.Merged) {
-        ddlPK = ddlPK + "(id)"
+        ddlPK = ddlPK + "(\"id\")"
       }
       else {
-        ddlPK = ddlPK + "(id, gwcbi___seqval_hex)"
+        ddlPK = ddlPK + "(\"id\", \"gwcbi___seqval_hex\")"
       }
       log.info(s"$jdbcWriteType - $ddlPK")
       stmt.execute(ddlPK)
@@ -269,10 +269,10 @@ trait OutputWriter {
       if (jdbcWriteType == JdbcWriteType.Merged) {
         var ddlAK1 = "ALTER TABLE " + tableName + " ADD CONSTRAINT " + tableNameNoSchema + "_ak1 UNIQUE "
         if (tableNameNoSchema.startsWith("pctl_") || tableNameNoSchema.startsWith("cctl_") || tableNameNoSchema.startsWith("bctl_") || tableNameNoSchema.startsWith("abtl_")) {
-          ddlAK1 = ddlAK1 + "(typecode)"
+          ddlAK1 = ddlAK1 + "(\"typecode\")"
         }
         else {
-          ddlAK1 = ddlAK1 + "(publicid)"
+          ddlAK1 = ddlAK1 + "(\"publicid\")"
         }
         log.info(s"$jdbcWriteType - $ddlAK1")
         stmt.execute(ddlAK1)
@@ -507,6 +507,7 @@ trait OutputWriter {
             i = i + 1
           }
           stmt.addBatch()
+          log.info(s"${stmt.toString}")
           rowCount += 1
           totalRowCount += 1
           if (rowCount % batchSize == 0) {
