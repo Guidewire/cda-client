@@ -485,12 +485,12 @@ trait OutputWriter {
                               jdbcWriteType: JdbcWriteType.Value
                              ): Unit = {
     var completed = false
-    var totalRowCount = 0
+    var totalRowCount = 0L
     val dbProductName = conn.getMetaData.getDatabaseProductName
     try {
       val  stmt = conn.prepareStatement(updateStmt)
       val setters = rddSchema.fields.map(f => makeSetter(conn, dialect, f.dataType))
-      //For Oracle only - map nullTypes to TINYINT for Boolean to work around Oracle JDBC driver issues 
+      //For Oracle only - map nullTypes to TINYINT for Boolean to work around Oracle JDBC driver issues
       val nullTypes = rddSchema.fields.map(f => if(dbProductName == "Oracle" && f.dataType == BooleanType) JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType else getJdbcType(f.dataType, dialect).jdbcNullType)
       val numFields = rddSchema.fields.length
 
