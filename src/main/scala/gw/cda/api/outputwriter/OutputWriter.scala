@@ -445,27 +445,48 @@ trait OutputWriter {
     log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
   }
 
+  /**  Build and return a table create DDL statement based on the given schema definition.
+   *
+   * @param dialect
+   * @param schema
+   * @param tableName
+   * @param jdbcWriteType
+   * @param dbProductName
+   * @return Table create DDL statement for the given table.
+   */
   def getTableCreateDDL( dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
     val sb = new StringBuilder()
     // Define specific columns we want to set as NOT NULL. Everything coming out of CDA parquet files is defined as nullable so
     // we do this to ensure there are columns available to set as PKs and/or AKs.
     var notNullCols = List("id", "gwcbi___operation", "gwcbi___seqval_hex")
     if (jdbcWriteType == JdbcWriteType.Merged) {
-      // For merged data, include publicid in list of not null columns.
+      // For merged data, include publicid, retired, and typecode in list of not null columns
+      // so they can be included in unique index definitions.
       notNullCols = notNullCols ++ List("publicid","retired","typecode")
     }
-    // We will explicitly set the data type for string data to avoid nvarchar(max) and varchar2 types that are potentially too short.
-    // nvarchar(max) columns can't be indexed.
+    // Explicitly set the data type for string data to avoid nvarchar(max) and varchar2 types that are potentially too long or short.
+    // nvarchar(max) columns can't be indexed.  Oracle JDBC converts the string datatype to VARCHAR2(255) which is potentially too short.
     val stringDataType = dbProductName match {
       case "Microsoft SQL Server" => "VARCHAR(1333)"
       case "PostgreSQL" => "VARCHAR(1333)"
       case "Oracle" => "VARCHAR2(1333)"
       case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
+    // Also for string data we need to handle very large text columns that we know of to avoid truncation sql exceptions.
+    val largeStringDataType = dbProductName match {
+      case "Microsoft SQL Server" => "VARCHAR(max)"
+      case "PostgreSQL" => "VARCHAR"
+      case "Oracle" => "VARCHAR2(32767)" // requires MAX_STRING_SIZE Oracle parameter to be set to EXTENDED.
+      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
     // Build the list of columns in alphabetic order.
     schema.fields.sortBy(f => f.name).foreach { field =>
       val name = dialect.quoteIdentifier(field.name)
-      val typ = if (field.dataType == StringType) stringDataType else getJdbcType(field.dataType, dialect).databaseTypeDefinition
+      val typ = if (field.dataType == StringType)
+        // Consider making the determination for the need for very large text columns configurable.  For now there is only one column we are aware of like this.
+        if (tableName.contains("cc_outboundrecord") && field.name == "content" ) largeStringDataType
+        else stringDataType
+        else  getJdbcType(field.dataType, dialect).databaseTypeDefinition
       val nullable = if (notNullCols.contains(field.name) || !field.nullable) "NOT NULL" else ""
       sb.append(s"$name $typ $nullable, ")
     }
