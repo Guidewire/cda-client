@@ -529,7 +529,6 @@ trait OutputWriter {
             i = i + 1
           }
           stmt.addBatch()
-          log.info(s"${stmt.toString}")
           rowCount += 1
           totalRowCount += 1
           if (rowCount % batchSize == 0) {
