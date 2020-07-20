@@ -406,8 +406,8 @@ trait OutputWriter {
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
-      val colNamesForSetClause = colListForSetClause.map(_ + " = ?").mkString(", ")
-      val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE id = ?"
+      val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
+      val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE \"id\" = ?"
       log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
@@ -433,7 +433,7 @@ trait OutputWriter {
     if (delCnt > 0) {
       val deleteSchema = DeleteDF.schema
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
-      val deleteStatement = "DELETE FROM " + tableName + " WHERE id = ?"
+      val deleteStatement = "DELETE FROM " + tableName + " WHERE \"id\" = ?"
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
@@ -479,14 +479,22 @@ trait OutputWriter {
       case "Oracle" => "VARCHAR2(32767)" // requires MAX_STRING_SIZE Oracle parameter to be set to EXTENDED.
       case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
+    // Also for BLOB data we need to handle differently for different platforms.
+    val blobDataType = dbProductName match {
+      case "Microsoft SQL Server" => "VARBINARY(max)"
+      case "PostgreSQL" => "bytea"
+      case "Oracle" => "BLOB"
+      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
     // Build the list of columns in alphabetic order.
     schema.fields.sortBy(f => f.name).foreach { field =>
       val name = dialect.quoteIdentifier(field.name)
       val typ = if (field.dataType == StringType)
-        // Consider making the determination for the need for very large text columns configurable.  For now there is only one column we are aware of like this.
-        if (tableName.contains("cc_outboundrecord") && field.name == "content" ) largeStringDataType
-        else stringDataType
-        else  getJdbcType(field.dataType, dialect).databaseTypeDefinition
+          // Consider making the determination for the need for very large text columns configurable.  For now there is only one column we are aware of like this.
+          if (tableName.contains("cc_outboundrecord") && field.name == "content" ) largeStringDataType
+          else stringDataType
+      else if (field.dataType == BinaryType) blobDataType
+      else  getJdbcType(field.dataType, dialect).databaseTypeDefinition
       val nullable = if (notNullCols.contains(field.name) || !field.nullable) "NOT NULL" else ""
       sb.append(s"$name $typ $nullable, ")
     }
