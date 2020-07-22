@@ -490,8 +490,13 @@ trait OutputWriter {
     schema.fields.sortBy(f => f.name).foreach { field =>
       val name = dialect.quoteIdentifier(field.name)
       val typ = if (field.dataType == StringType)
-          // Consider making the determination for the need for very large text columns configurable.  For now there is only one column we are aware of like this.
-          if (tableName.contains("cc_outboundrecord") && field.name == "content" ) largeStringDataType
+          // TODO Consider making the determination for the need for very large text columns configurable.
+          // These are the OOTB columns we have found so far.
+          if (tableName.concat("."+field.name).contains("cc_outboundrecord.content")
+              || tableName.concat("."+field.name).contains("cc_contactorigvalue.origvalue")
+              || tableName.concat("."+field.name).contains("pc_diagratingworksheet.diagnosticcapture")
+              || tableName.concat("."+field.name).contains("cc_note.body")
+             ) largeStringDataType
           else stringDataType
       else if (field.dataType == BinaryType) blobDataType
       else  getJdbcType(field.dataType, dialect).databaseTypeDefinition
