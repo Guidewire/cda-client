@@ -153,6 +153,9 @@ class TableReader(clientConfig: ClientConfig) {
           val tmpFingerprintsWithUnprocessedRecords = getFingerprintsWithUnprocessedRecords(tableName, manifestEntry, savepointsProcessor)
           val fingerprintsWithUnprocessedRecords: Iterable[String] =
             if (clientConfig.outputSettings.saveIntoJdbcRaw || clientConfig.outputSettings.saveIntoJdbcMerged) {
+              //TODO Need to allow multiple fingerprints now that we're dynamically altering table definitions
+              // HOWEVER we can't handle fingerprints in parallel for a given table since we're executing
+              // ALTER TABLE statements against the tables as the parquet file schemas change
               // When saving to JDBC, we want to be sure we only return one fingerprint in each load to avoid schema conflict.
               Seq(tmpFingerprintsWithUnprocessedRecords.iterator.next())
             }
@@ -271,7 +274,7 @@ class TableReader(clientConfig: ClientConfig) {
         // make sure there are no schema change issues for JdbcRaw or JdbcMerged before writing data for
         // this fingerprint to any of the target types.
         val jdbcRawIsOk =  if (clientConfig.outputSettings.saveIntoJdbcRaw) {
-          if (outputWriter.schmasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
+          if (outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
             clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, outputWriter.JdbcWriteType.Raw)) {
             true
           } else {
@@ -282,7 +285,7 @@ class TableReader(clientConfig: ClientConfig) {
         }
 
         val jdbcMergedIsOk = if (clientConfig.outputSettings.saveIntoJdbcMerged) {
-          if (outputWriter.schmasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionMerged.jdbcSchema, tableName, schemaFingerprint,
+          if (outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionMerged.jdbcSchema, tableName, schemaFingerprint,
             clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword, spark, outputWriter.JdbcWriteType.Merged)) {
             true
           } else {
@@ -306,13 +309,15 @@ class TableReader(clientConfig: ClientConfig) {
           log.info(s"Wrote data for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullWriteTime / 1000.0).toString} seconds")
 
           // Savepoints update with the manifest timestamp, since that is the data we copied
-          //savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
+          // savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
 
+          //TODO Need to rework this to allow for all fingerprints to process now that we are dynamically handling
+          // schema changes in the database tables:
           // Changed the above line of code to account for the fact
           // there could be more than one fingerprint.  Previously, the new savepoint for
           // the table was always set to the manifestTimestampForTable.  If there were
           // multiple fingerprints and one of subsequent fingerprints failed to load or as in our
-          // new code case, are omitted due to schema changes, we want to use the timepstamp of the
+          // new code case, are omitted due to schema changes, we want to use the timestamp of the
           // next fingerprint rather than the manifestTimestampForTable.
 
           // Get a list of all fingerprints that follow the one we are processing.

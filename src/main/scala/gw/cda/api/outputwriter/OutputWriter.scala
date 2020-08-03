@@ -214,7 +214,7 @@ trait OutputWriter {
     val dbProductName = dbm.getDatabaseProductName
     val dialect = JdbcDialects.get(url)
     val insertSchema = InsertDF.schema
-    val batchSize = 5000 // consider making this configurable.
+    val batchSize = 5000 // TODO consider making this configurable.
 
     // Create the table if it does not already exist.
     if (!tableExists) {
@@ -327,7 +327,7 @@ trait OutputWriter {
     val dbProductName = dbm.getDatabaseProductName
     val dialect = JdbcDialects.get(url)
     val insertSchema = InsertDF.schema
-    val batchSize = 5000 // consider making this configurable.
+    val batchSize = 5000 // TODO consider making this configurable.
 
     // Create the table if it does not already exist.
     if (!tableExists) {
@@ -373,7 +373,7 @@ trait OutputWriter {
       colNamesArray --= Array("id", "gwcbi___seqval_hex")
       val colNamesString = "gwcbi___seqval_hex, " + colNamesArray.mkString(",")
 
-      val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLastestUpdatesOnly) {
+      val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
         // Find the latest change for each id based on the gwcbi___seqval_hex.
         // Note: For nested structs, max on struct is computed as
         // max on first struct field, if equal fall back to second fields, and so on.
@@ -397,7 +397,7 @@ trait OutputWriter {
       UpdateDF.unpersist()
 
       val latestUpdCnt = latestChangeForEachID.count()
-      if (clientConfig.jdbcConnectionMerged.jdbcApplyLastestUpdatesOnly) {
+      if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
         // Log row count following the reduction to only last update for each id.
         log.info(s"Merged - $tableName update cnt after agg to get latest for each id: ${latestUpdCnt.toString}")
       } else {
@@ -455,7 +455,9 @@ trait OutputWriter {
    * @return Table create DDL statement for the given table.
    */
   def getTableCreateDDL( dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
-    val sb = new StringBuilder()
+    val allTableColumnsDefinitions = new StringBuilder()
+
+    //TODO Should this be set up as defined list(s)?
     // Define specific columns we want to set as NOT NULL. Everything coming out of CDA parquet files is defined as nullable so
     // we do this to ensure there are columns available to set as PKs and/or AKs.
     var notNullCols = List("id", "gwcbi___operation", "gwcbi___seqval_hex")
@@ -464,6 +466,33 @@ trait OutputWriter {
       // so they can be included in unique index definitions.
       notNullCols = notNullCols ++ List("publicid","retired","typecode")
     }
+  // Build the list of columns in alphabetic order.
+    schema.fields.sortBy(f => f.name).foreach { field =>
+      val nullable = if (notNullCols.contains(field.name) || !field.nullable) false else true
+      val name = dialect.quoteIdentifier(field.name)
+      val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName, tableName, name, field.dataType, nullable)
+      allTableColumnsDefinitions.append(s"$columnDefinition, ")
+    }
+    // Remove the trailing comma.
+    val colsForCreateDDL = allTableColumnsDefinitions.stripSuffix(", ")
+    // Build and return the final create table statement.
+    s"CREATE TABLE $tableName ($colsForCreateDDL)"
+  }
+
+  /**  Build and return a column definition to be used in CREATE and ALTER DDL statements.
+   *
+   * @param dialect
+   * @param dbProductName
+   * @param tableName
+   * @param fieldName
+   * @param fieldDataType
+   * @param fieldNullable
+   * @return Column definition - COLUMN_NAME TYPE_DECLARATION NULLABLE (i.e. '"ColumnName" VARCHAR(1333) NOT NULL').
+   */
+  def buildDDLColumnDefinition(dialect: JdbcDialect, dbProductName: String, tableName: String, fieldName:String, fieldDataType:DataType, fieldNullable:Boolean): String = {
+    val columnDefinition = new StringBuilder()
+
+    // TODO Consider making gwcbi___seqval_hex a smaller varchar than (1333) since it is part of a clustered index
     // Explicitly set the data type for string data to avoid nvarchar(max) and varchar2 types that are potentially too long or short.
     // nvarchar(max) columns can't be indexed.  Oracle JDBC converts the string datatype to VARCHAR2(255) which is potentially too short.
     val stringDataType = dbProductName match {
@@ -486,27 +515,20 @@ trait OutputWriter {
       case "Oracle" => "BLOB"
       case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    // Build the list of columns in alphabetic order.
-    schema.fields.sortBy(f => f.name).foreach { field =>
-      val name = dialect.quoteIdentifier(field.name)
-      val typ = if (field.dataType == StringType)
-          // TODO Consider making the determination for the need for very large text columns configurable.
-          // These are the OOTB columns we have found so far.
-          if (tableName.concat("."+field.name).contains("cc_outboundrecord.content")
-              || tableName.concat("."+field.name).contains("cc_contactorigvalue.origvalue")
-              || tableName.concat("."+field.name).contains("pc_diagratingworksheet.diagnosticcapture")
-              || tableName.concat("."+field.name).contains("cc_note.body")
-             ) largeStringDataType
-          else stringDataType
-      else if (field.dataType == BinaryType) blobDataType
-      else  getJdbcType(field.dataType, dialect).databaseTypeDefinition
-      val nullable = if (notNullCols.contains(field.name) || !field.nullable) "NOT NULL" else ""
-      sb.append(s"$name $typ $nullable, ")
-    }
-    // Remove the trailing comma.
-    val colsForCreateDDL = sb.stripSuffix(", ")
-    // Build and return the final create table statement.
-    s"CREATE TABLE $tableName ($colsForCreateDDL)"
+    val fieldDataTypeDefinition = if (fieldDataType == StringType)
+    // TODO Consider making the determination for the need for very large text columns configurable.
+    // These are the OOTB columns we have found so far.
+    if ((tableName.equals("cc_outboundrecord") && fieldName.equals("content"))
+      || (tableName.equals("cc_contactorigvalue") && fieldName.equals("origvalue"))
+      || (tableName.equals("pc_diagratingworksheet") && fieldName.equals("diagnosticcapture"))
+      || (tableName.equals("cc_note") && fieldName.equals("body"))
+    ) largeStringDataType
+    else stringDataType
+    else if (fieldDataType == BinaryType) blobDataType
+    else  getJdbcType(fieldDataType, dialect).databaseTypeDefinition
+    val nullable = if (!fieldNullable) "NOT NULL" else ""
+    columnDefinition.append(s"$fieldName $fieldDataTypeDefinition $nullable")
+    columnDefinition.toString()
   }
 
   private def updateDataframe(conn: Connection,
@@ -687,8 +709,10 @@ trait OutputWriter {
   }
 
   /** Determine if table schema definition is the same as the parquet file schema definition.
+   * If differences in columns, ADD or DROP necessary columns from database table to align definitions, and re-check
+   * for a match between database and file schema definitions.
    *
-   * @param dataFrame based on the parquet file format
+   * @param fileDataFrame based on the parquet file format
    * @param jdbcSchemaName database schema name
    * @param tableName is the name of the database table we being compared to
    * @param url database url
@@ -701,14 +725,15 @@ trait OutputWriter {
    *                               for them when comparing to the schema definition in the database.
    * @return Boolean indicating if the table schema definition is the same as the parquet file schema definition
    */
-  def schmasAreConsistent(dataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
+  //TODO Consider renaming this function (schemasAreConsistent) to indicate we're doing more than just checking for consistency
+  def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
                           user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
 
     if (tableExists(tableName, url, user, pswd)) {
-      //build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
+      // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
       val sql = "(select * from " + jdbcSchemaName + "." + tableName + " where 1=2) as " + tableName
-      val jdbcDF = spark.read
-        .format("jdbc")
+//      val sql = jdbcSchemaName + "." + tableName
+      val tableDataFrame = spark.read.format("jdbc")
         .option("url", url)
         .option("dbtable",sql)
         .option("user", user)
@@ -717,7 +742,7 @@ trait OutputWriter {
 
       val dialect = JdbcDialects.get(url)
 
-      // Derive the product name from the url to avoid having to create or pass in a connection
+      //Derive the product name from the url to avoid having to create or pass in a connection
       // to access the metadata object.
       val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
         "Microsoft SQL Server"}
@@ -726,40 +751,133 @@ trait OutputWriter {
         if (url.toLowerCase.contains("oracle")) {
         "Oracle"} }}
 
-      // Generate the table create ddl statement based on the schema definition of the database table.
-      val dbDDL = getTableCreateDDL(dialect, jdbcDF.schema, tableName, jdbcWriteType, dbProductName.toString)
+      // Get the schema definition for the data read from the database table
+      val tableSchemaDef = tableDataFrame.schema
 
       // Get the schema definition for the data read from the parquet file.
-      val dfSchemaDef  = if (jdbcWriteType == JdbcWriteType.Merged) {
-       val dropList = dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
-       dataFrame.drop(dropList: _*).schema
+      val fileSchemaDef  = if (jdbcWriteType == JdbcWriteType.Merged) {
+        val dropList = fileDataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
+        fileDataFrame.drop(dropList: _*).schema
       } else {
-        dataFrame.schema
+        fileDataFrame.schema
       }
 
-      // Build the create ddl statement based on the data read from the parquet file.
-      val dfDDL = getTableCreateDDL(dialect, dfSchemaDef, tableName, jdbcWriteType, dbProductName.toString)
+      //Determine if columns need to be added or removed from the database table based on
+      // changes to the parquet file
+      val fileMapSet = fileSchemaDef.map(rec=>(rec.name,rec.dataType,rec.nullable)).toSet
+      val tableMapSet = tableSchemaDef.map(rec=>(rec.name,rec.dataType,rec.nullable)).toSet
+      val newFileColumns = fileMapSet diff tableMapSet
+      //val missingFileColumns = tableMapSet diff fileMapSet
 
-      // Compare the two table definitions and log warnings if they do not match.
-      if(dbDDL==dfDDL) {
-        //log.info(s"File schema MATCHES Table schema")
-        true
+      val databaseConnection = DriverManager.getConnection(url, user, pswd)
+      databaseConnection.setAutoCommit(false)
+
+      //ADD COLUMNS TO DATABASE TABLE THAT HAVE BEEN ADDED TO PARQUET FILE
+      // Check to see if there are columns in the parquet file that are not in the database table.
+      // If there are we are going to build the ALTER TABLE statement and execute the statement.
+      if(!newFileColumns.isEmpty) {
+        log.warn(s"New File Columns: ${newFileColumns.toString()}")
+        for (columnDataFrameDefinition <- newFileColumns) {
+          val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName.toString, tableName, columnDataFrameDefinition._1, columnDataFrameDefinition._2, columnDataFrameDefinition._3)
+          val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName ADD $columnDefinition"
+          log.warn(s"Statement to be executed: $alterTableStatement")
+          try {
+            // Execute the table create DDL
+            val stmt = databaseConnection.createStatement
+            stmt.execute(alterTableStatement)
+            stmt.close()
+            databaseConnection.commit()
+            log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+          } catch {
+            case e: Exception =>
+              databaseConnection.rollback()
+              databaseConnection.close()
+              log.warn(s"ALTER TABLE - ROLLBACK '$tableName' for alter table statement $alterTableStatement - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+              throw e
+          }
+
+        }
       } else {
+        log.warn(s"NO NEW FILE COLUMNS")
+      }
 
-        val logMsg = (s"""
-  |
-  | $jdbcWriteType table definition for '$tableName' does not match parquet fingerprint '$schemaFingerprint'.  Bypassing updates for fingerprint $schemaFingerprint.
-  |
-  | $tableName $jdbcWriteType DB Table Schema:
-  | ${"-" * (tableName.length + jdbcWriteType.toString.length + 18)}
-  | ${dbDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
-  |
-  | $tableName Parquet Schema for Fingerprint $schemaFingerprint:
-  | ${"-" * (tableName.length + schemaFingerprint.length + 33)}
-  | ${dfDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
-  |""")
-        log.warn(logMsg)
-        false
+      //DROP COLUMNS FROM DATABASE TABLE THAT HAVE BEEN REMOVED FROM PARQUET FILE
+      // Check to see if there are columns in the database table that are not in the parquet file.
+      // If there are we are going to build the ALTER TABLE statement and execute the statement.
+/*      if(!missingFileColumns.isEmpty) {
+        log.warn(s"Deleted File Columns: ${missingFileColumns.toString()}")
+        for(columnDataFrameDefinition <- missingFileColumns) {
+          val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName DROP COLUMN ${columnDataFrameDefinition._1}"
+          log.warn(s"Statement to be executed: $alterTableStatement")
+          try {
+            // Execute the table create DDL
+            val stmt = databaseConnection.createStatement
+            stmt.execute(alterTableStatement)
+            stmt.close()
+            databaseConnection.commit()
+            log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+          } catch {
+            case e: Exception =>
+              databaseConnection.rollback()
+              databaseConnection.close()
+              log.warn(s"ALTER TABLE - ROLLBACK '$tableName' for alter table statement $alterTableStatement - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+              throw e
+          }
+        }
+      } else {
+        log.warn(s"NO MISSING FILE COLUMNS")
+      }
+*/
+
+      databaseConnection.close()
+
+      // Generate the table create ddl statement based on the schema definition of the database table.
+      val databaseDDL = getTableCreateDDL(dialect, tableSchemaDef, tableName, jdbcWriteType, dbProductName.toString)
+
+      // Build the create ddl statement based on the data read from the parquet file.
+      val fileDDL = getTableCreateDDL(dialect, fileSchemaDef, tableName, jdbcWriteType, dbProductName.toString)
+
+      //Compare the two table definitions and log warnings if they do not match.
+      // Added twist here - we need to check to see if columns had to be added or removed from the database table.
+      // If we had to ADD or DROP columns from the database table, we need to rebuild the dataframe for the JDBC
+      // connection and check for schema consistency using the new structures that we just performed ALTER TABLE on.
+      // Since we handled all of the added or removed columns, any failure at this point will be on structure changes we
+      // cannot handle via code, and the DDL differences will be logged during the second call to schemasAreConsistent.
+      if(databaseDDL==fileDDL) {
+        val logMsg = s"""SCHEMAS MATCH -
+        | DATABASE DDL: $databaseDDL
+        | FILE DDL: $fileDDL"""
+        log.info(logMsg)
+        true
+      } else { // instead of just logging "false", we need to check to see if there were table DDL changes executed
+          if(!newFileColumns.isEmpty) {// || !missingFileColumns.isEmpty) {
+            // check the schema comparison again, but now with the new table structure following ALTER statements
+            val newComparison = schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
+            if(newComparison) { // if its fine, just return true
+              true}
+            else { // if there are still problems, return false - the second call to schemasAreConsistent will have logged any additional issues
+              false
+            }
+          }
+          else { //if there were not any ALTER statements to execute, just fail as normal and log message
+            val logMsg = (s"""
+                             |
+                             |
+                             | $jdbcWriteType table definition for '$tableName' does not match parquet fingerprint '$schemaFingerprint'.  Bypassing updates for fingerprint $schemaFingerprint.
+                             |
+                             | $tableName $jdbcWriteType DB Table Schema:
+                             | ${"-" * (tableName.length + jdbcWriteType.toString.length + 18)}
+                             | ${databaseDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
+                             |
+                             | $tableName Parquet Schema for Fingerprint $schemaFingerprint:
+                             | ${"-" * (tableName.length + schemaFingerprint.length + 33)}
+                             | ${fileDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
+                             |""")
+            log.warn(logMsg)
+            log.warn(s"Database Table Schema Definition: $tableSchemaDef")
+            log.warn(s"File Schema Definition: $fileSchemaDef")
+            false
+          }
       }
     }
     else {
@@ -879,6 +997,7 @@ trait OutputWriter {
 
 }
 
+// TODO need to rework object OutputWriter now that there are other config parameters needed for additional outputs
 object OutputWriter {
 
   // The apply() is like a builder, caller can create without using the 'new' keyword
