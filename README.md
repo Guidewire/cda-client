@@ -233,6 +233,13 @@ If you set saveAsSingleFileCSV=false, you will get multiple files, they will all
 
 Output of CDA data to standard RDBMS platforms is provided via two methods: "Raw" and "Merged". 
 
+Database permissions for the account running the application must include: 
+- CREATE TABLE 
+- ALTER TABLE 
+- INSERT 
+- UPDATE 
+- DELETE
+
 "Raw" output maintains all activities and transactions as seen in the CSV files output. Each Insert, Update, and Delete activity recorded are included in the "Raw" database output, along with the gwcbi___* columns indicating the sequence and operations.
 
 "Merged" output merges the activities of a given record down to a view of the record as it looked at a point in time in the source system database. Instead of inserting each activity, only the latest version of the record exists, making it appear more like the source system database table it represents.
