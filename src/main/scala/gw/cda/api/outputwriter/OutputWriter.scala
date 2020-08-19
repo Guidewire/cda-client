@@ -206,12 +206,18 @@ trait OutputWriter {
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionRaw.jdbcUrl
     val dbm = connection.getMetaData
+    val dbProductName = dbm.getDatabaseProductName
 
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameNoSchema, Array("TABLE"))
+    val tableNameCaseSensitive = dbProductName  match {
+      case "Microsoft SQL Server" => tableNameNoSchema
+      case "PostgreSQL" => tableNameNoSchema
+      case "Oracle" => tableNameNoSchema.toUpperCase
+      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next()
 
     // Get some data we will need for later.
-    val dbProductName = dbm.getDatabaseProductName
     val dialect = JdbcDialects.get(url)
     val insertSchema = InsertDF.schema
     val batchSize = 5000 // TODO consider making this configurable.
@@ -320,11 +326,17 @@ trait OutputWriter {
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionMerged.jdbcUrl
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameNoSchema,  Array("TABLE"))
+    val dbProductName = dbm.getDatabaseProductName
+    val tableNameCaseSensitive = dbProductName  match {
+      case "Microsoft SQL Server" => tableNameNoSchema
+      case "PostgreSQL" => tableNameNoSchema
+      case "Oracle" => tableNameNoSchema.toUpperCase
+      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive,  Array("TABLE"))
     val tableExists = tables.next
 
     // Get some data we will need for later.
-    val dbProductName = dbm.getDatabaseProductName
     val dialect = JdbcDialects.get(url)
     val insertSchema = InsertDF.schema
     val batchSize = 5000 // TODO consider making this configurable.
@@ -844,10 +856,11 @@ trait OutputWriter {
       // Since we handled all of the added or removed columns, any failure at this point will be on structure changes we
       // cannot handle via code, and the DDL differences will be logged during the second call to schemasAreConsistent.
       if(databaseDDL==fileDDL) {
-        val logMsg = s"""SCHEMAS MATCH -
-        | DATABASE DDL: $databaseDDL
-        | FILE DDL: $fileDDL"""
-        log.info(logMsg)
+// IN PLACE FOR DEBUGGING AND TESTING PURPOSES SO COMMENTED OUT
+//        val logMsg = s"""SCHEMAS MATCH -
+//        | DATABASE DDL: $databaseDDL
+//        | FILE DDL: $fileDDL"""
+//        log.info(logMsg)
         true
       } else { // instead of just logging "false", we need to check to see if there were table DDL changes executed
           if(!newFileColumns.isEmpty) {// || !missingFileColumns.isEmpty) {
