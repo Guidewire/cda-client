@@ -125,9 +125,9 @@ class TableReader(clientConfig: ClientConfig) {
         tablesToInclude = singleTableName
       }
 
-      if(!tablesToInclude.isEmpty) {
+      if (!tablesToInclude.isEmpty) {
         tablesToInclude = tablesToInclude.replace(" ", "")
-        val tablesList =  tablesToInclude.split(",")
+        val tablesList = tablesToInclude.split(",")
         logMsg = logMsg + (s"""
                               |Including ONLY ${tablesList.size} table(s): $tablesToInclude""".stripMargin)
         useManifestMap = manifestMap.filterKeys(tablesList.contains)
@@ -159,7 +159,9 @@ class TableReader(clientConfig: ClientConfig) {
               // When saving to JDBC, we want to be sure we only return one fingerprint in each load to avoid schema conflict.
               Seq(tmpFingerprintsWithUnprocessedRecords.iterator.next())
             }
-             else {tmpFingerprintsWithUnprocessedRecords}
+            else {
+              tmpFingerprintsWithUnprocessedRecords
+            }
           TableS3BaseLocationWithFingerprintsWithUnprocessedRecords(tableName, baseUri, fingerprintsWithUnprocessedRecords)
         })
         // Map each table s3 url to all corresponding timestamp subfolder urls (with new data to copy)
@@ -195,10 +197,10 @@ class TableReader(clientConfig: ClientConfig) {
               copyTableFingerprintPairJob(tableName, schemaFingerprint, copyJobs.get((tableName, schemaFingerprint)), manifestMap, savepointsProcessor, outputWriter)
               completed = true
             }
-            catch  {
-              case e : Throwable =>
+            catch {
+              case e: Throwable =>
                 log.warn(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e")
-                //log.warn(e)
+              //log.warn(e)
             }
             finally {
               if (completed) {
@@ -273,7 +275,7 @@ class TableReader(clientConfig: ClientConfig) {
         // Since all output types (CSV, Parquet, JdbcRaw, JdbcMerged) share a common savepoints.json,
         // make sure there are no schema change issues for JdbcRaw or JdbcMerged before writing data for
         // this fingerprint to any of the target types.
-        val jdbcRawIsOk =  if (clientConfig.outputSettings.saveIntoJdbcRaw) {
+        val jdbcRawIsOk = if (clientConfig.outputSettings.saveIntoJdbcRaw) {
           if (outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
             clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, outputWriter.JdbcWriteType.Raw)) {
             true
@@ -301,7 +303,7 @@ class TableReader(clientConfig: ClientConfig) {
           // Write each table and its schema to the configured output type(s) (CSV, Parquet, JDBC) to the configured location
           val startWriteTime = tableStopwatch.getTime
           val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
-          val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint,"unknown")
+          val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint, "unknown")
           val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp,
             manifestTimestampForTable, dataFrameForTable)
           outputWriter.write(tableDataFrameWrapperForMicroBatch)
@@ -333,9 +335,10 @@ class TableReader(clientConfig: ClientConfig) {
           if (fingerprintsAfterCurrent.size > 0) {
             val bypassedFingerprintsList = fingerprintsAfterCurrent
               .map({ case (schemaFingerprint, _) => schemaFingerprint })
-            log.warn(s"""
-  | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
-  |   Only one fingerprint per table can be processed at a time.""")
+            log.warn(
+              s"""
+                 | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
+                 |   Only one fingerprint per table can be processed at a time.""")
           }
 
           // Get the timestamp of the next fingerprint.
@@ -454,12 +457,12 @@ class TableReader(clientConfig: ClientConfig) {
     val s3URI = tableTimestampSubfolderInfo.timestampSubfolderURI
     val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}*"
     log.info(s"Reading '${tableTimestampSubfolderInfo.tableName}' from $s3aURL, on thread ${Thread.currentThread()}")
-// Adding in column renaming capabilities - we ran across the column name "interval", and cannot get the jdbc driver to stop creating the column with
-//   double quotes around it in the table definition. When we execute the Merged code, it thinks the value is a literal and won't insert.
-//   Renamed "interval" to "interval_".  Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
+    // Adding in column renaming capabilities - we ran across the column name "interval", and cannot get the jdbc driver to stop creating the column with
+    //   double quotes around it in the table definition. When we execute the Merged code, it thinks the value is a literal and won't insert.
+    //   Renamed "interval" to "interval_".  Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
     val dataFrame = spark.sqlContext.read.parquet(s3aURL)
-      .withColumnRenamed("interval","interval_")
-//      .withColumnRenamed("anotherone", "anotherone_")
+      .withColumnRenamed("interval", "interval_")
+    //      .withColumnRenamed("anotherone", "anotherone_")
     val dataFrameNoInternalColumns = dropIrrelevantInternalColumns(dataFrame)
     DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint,
       dataFrameNoInternalColumns)
@@ -516,13 +519,13 @@ class TableReader(clientConfig: ClientConfig) {
   /**
    * Get fingerprints with records not yet processed.
    *
-   * @param tableName Table to fetch fingerprints for.
-   * @param manifestEntry Manifest entry corresponding to the table.
+   * @param tableName           Table to fetch fingerprints for.
+   * @param manifestEntry       Manifest entry corresponding to the table.
    * @param savepointsProcessor Savepoint data processor.
    * @return Fingerprints for the table with records not yet processed.
    */
   private[cda] def getFingerprintsWithUnprocessedRecords(tableName: String, manifestEntry: ManifestEntry,
-                                                    savepointsProcessor: SavepointsProcessor): Iterable[String] = {
+                                                         savepointsProcessor: SavepointsProcessor): Iterable[String] = {
     val lastProcessedTimestamp: Long = savepointsProcessor.getSavepoint(tableName).map(_.toLong).getOrElse(-1)
     val fingerprintsSortedByTimestamp = manifestEntry.schemaHistory
       .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })

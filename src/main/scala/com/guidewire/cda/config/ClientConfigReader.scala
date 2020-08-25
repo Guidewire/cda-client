@@ -32,7 +32,8 @@ private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: In
 private[cda] case class SparkTuning(maxResultSize: String,
                                     driverMemory: String,
                                     executorMemory: String)
-/***/
+
+/** */
 private[cda] case class JdbcConnectionRaw(jdbcUsername: String,
                                           jdbcPassword: String,
                                           jdbcUrl: String,
@@ -196,7 +197,8 @@ object ClientConfigReader {
 
   /**
    * Assert that a condition holds for a parameter value, throwing an exception if it doesn't.
-   * @param condition The condition to check.
+   *
+   * @param condition    The condition to check.
    * @param errorMessage The error message provided if the condition doesn't hold.
    * @throws InvalidConfigParameterException if the condition doesn't hold.
    */
@@ -258,25 +260,25 @@ object ClientConfigReader {
    */
   private def validateJdbcConnectionRaw(clientConfig: ClientConfig): Unit = {
     // If saving to JDBC then validate the jdbcConnection section.
-    if (clientConfig.outputSettings.saveIntoJdbcRaw || clientConfig.outputSettings.saveIntoJdbcMerged  ) {
+    if (clientConfig.outputSettings.saveIntoJdbcRaw || clientConfig.outputSettings.saveIntoJdbcMerged) {
       try {
         require(clientConfig.jdbcConnectionRaw != null, "jdbcConnectionRaw section is missing in the config file")
       } catch {
         case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
       }
 
-      /**   User name and password are no longer require to support windows authentication.
-      try {
-        require(clientConfig.jdbcConnectionRaw.jdbcUsername != null, "jdbcConnectionRaw.jdbcUsername is blank")
-      } catch {
-        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
-      }
-
-      try {
-        require(clientConfig.jdbcConnectionRaw.jdbcPassword != null, "jdbcConnectionRaw.jdbcPassword is blank")
-      } catch {
-        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
-      }
+      /** User name and password are no longer require to support windows authentication.
+       * try {
+       * require(clientConfig.jdbcConnectionRaw.jdbcUsername != null, "jdbcConnectionRaw.jdbcUsername is blank")
+       * } catch {
+       * case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+       * }
+       *
+       * try {
+       * require(clientConfig.jdbcConnectionRaw.jdbcPassword != null, "jdbcConnectionRaw.jdbcPassword is blank")
+       * } catch {
+       * case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+       * }
        */
       try {
         require(clientConfig.jdbcConnectionRaw.jdbcUrl != null, "jdbcConnectionRaw.jdbcUrl is blank")
@@ -295,9 +297,9 @@ object ClientConfigReader {
       } catch {
         case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
       }
-      val validOptions  = List("overwrite", "append")
+      val validOptions = List("overwrite", "append")
       try {
-        require( validOptions.contains(clientConfig.jdbcConnectionRaw.jdbcSaveMode.toLowerCase()),
+        require(validOptions.contains(clientConfig.jdbcConnectionRaw.jdbcSaveMode.toLowerCase()),
           "jdbcConnection.jdbcSaveMode is is not valid.  Valid options are 'overwrite' or 'append'.")
       } catch {
         case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
@@ -312,25 +314,25 @@ object ClientConfigReader {
    */
   private def validateJdbcConnectionMerged(clientConfig: ClientConfig): Unit = {
     // If saving to JDBC then validate the jdbcConnection section.
-    if (clientConfig.outputSettings.saveIntoJdbcMerged || clientConfig.outputSettings.saveIntoJdbcMerged  ) {
+    if (clientConfig.outputSettings.saveIntoJdbcMerged || clientConfig.outputSettings.saveIntoJdbcMerged) {
       try {
         require(clientConfig.jdbcConnectionMerged != null, "validateJdbcConnectionMerged section is missing in the config file")
       } catch {
         case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
       }
 
-      /**   User name and password are no longer require to support windows authentication.
-      try {
-        require(clientConfig.jdbcConnectionMerged.jdbcUsername != null, "jdbcConnectionMerged.jdbcUsername is blank")
-      } catch {
-        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
-      }
-
-      try {
-        require(clientConfig.jdbcConnectionMerged.jdbcPassword != null, "jdbcConnectionMerged.jdbcPassword is blank")
-      } catch {
-        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
-      }
+      /** User name and password are no longer require to support windows authentication.
+       * try {
+       * require(clientConfig.jdbcConnectionMerged.jdbcUsername != null, "jdbcConnectionMerged.jdbcUsername is blank")
+       * } catch {
+       * case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+       * }
+       *
+       * try {
+       * require(clientConfig.jdbcConnectionMerged.jdbcPassword != null, "jdbcConnectionMerged.jdbcPassword is blank")
+       * } catch {
+       * case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+       * }
        */
       try {
         require(clientConfig.jdbcConnectionMerged.jdbcUrl != null, "jdbcConnectionMerged.jdbcUrl is blank")

@@ -208,11 +208,11 @@ trait OutputWriter {
     val dbm = connection.getMetaData
     val dbProductName = dbm.getDatabaseProductName
 
-    val tableNameCaseSensitive = dbProductName  match {
+    val tableNameCaseSensitive = dbProductName match {
       case "Microsoft SQL Server" => tableNameNoSchema
-      case "PostgreSQL" => tableNameNoSchema
-      case "Oracle" => tableNameNoSchema.toUpperCase
-      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      case "PostgreSQL"           => tableNameNoSchema
+      case "Oracle"               => tableNameNoSchema.toUpperCase
+      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
     val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next()
@@ -249,9 +249,9 @@ trait OutputWriter {
   }
 
   /**
-   * @param connection database connection
-   * @param url used to determine db platform
-   * @param tableName name of the table without the schema prefix
+   * @param connection    database connection
+   * @param url           used to determine db platform
+   * @param tableName     name of the table without the schema prefix
    * @param jdbcWriteType indicates Raw or Merged data write type
    */
   private def createIndexes(connection: Connection, url: String, tableName: String, jdbcWriteType: JdbcWriteType.Value): Unit = {
@@ -288,10 +288,10 @@ trait OutputWriter {
       log.info(s"Unsupported database.  $url. Indexes were not created.")
       stmt.close()
       throw new SQLException(s"Unsupported database platform: $url")
-     }
-
-      stmt.close()
     }
+
+    stmt.close()
+  }
 
   /** Merge the raw transactions into a JDBC target database applying the inserts/updates/deletes
    * according to transactions in the raw CDC data.
@@ -327,13 +327,13 @@ trait OutputWriter {
     val url = clientConfig.jdbcConnectionMerged.jdbcUrl
     val dbm = connection.getMetaData
     val dbProductName = dbm.getDatabaseProductName
-    val tableNameCaseSensitive = dbProductName  match {
+    val tableNameCaseSensitive = dbProductName match {
       case "Microsoft SQL Server" => tableNameNoSchema
-      case "PostgreSQL" => tableNameNoSchema
-      case "Oracle" => tableNameNoSchema.toUpperCase
-      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      case "PostgreSQL"           => tableNameNoSchema
+      case "Oracle"               => tableNameNoSchema.toUpperCase
+      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive,  Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next
 
     // Get some data we will need for later.
@@ -457,7 +457,7 @@ trait OutputWriter {
     log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
   }
 
-  /**  Build and return a table create DDL statement based on the given schema definition.
+  /** Build and return a table create DDL statement based on the given schema definition.
    *
    * @param dialect
    * @param schema
@@ -466,7 +466,7 @@ trait OutputWriter {
    * @param dbProductName
    * @return Table create DDL statement for the given table.
    */
-  def getTableCreateDDL( dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
+  def getTableCreateDDL(dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
     val allTableColumnsDefinitions = new StringBuilder()
 
     //TODO Should this be set up as defined list(s)?
@@ -476,9 +476,9 @@ trait OutputWriter {
     if (jdbcWriteType == JdbcWriteType.Merged) {
       // For merged data, include publicid, retired, and typecode in list of not null columns
       // so they can be included in unique index definitions.
-      notNullCols = notNullCols ++ List("publicid","retired","typecode")
+      notNullCols = notNullCols ++ List("publicid", "retired", "typecode")
     }
-  // Build the list of columns in alphabetic order.
+    // Build the list of columns in alphabetic order.
     schema.fields.sortBy(f => f.name).foreach { field =>
       val nullable = if (notNullCols.contains(field.name) || !field.nullable) false else true
       val name = dialect.quoteIdentifier(field.name)
@@ -491,7 +491,7 @@ trait OutputWriter {
     s"CREATE TABLE $tableName ($colsForCreateDDL)"
   }
 
-  /**  Build and return a column definition to be used in CREATE and ALTER DDL statements.
+  /** Build and return a column definition to be used in CREATE and ALTER DDL statements.
    *
    * @param dialect
    * @param dbProductName
@@ -501,7 +501,7 @@ trait OutputWriter {
    * @param fieldNullable
    * @return Column definition - COLUMN_NAME TYPE_DECLARATION NULLABLE (i.e. '"ColumnName" VARCHAR(1333) NOT NULL').
    */
-  def buildDDLColumnDefinition(dialect: JdbcDialect, dbProductName: String, tableName: String, fieldName:String, fieldDataType:DataType, fieldNullable:Boolean): String = {
+  def buildDDLColumnDefinition(dialect: JdbcDialect, dbProductName: String, tableName: String, fieldName: String, fieldDataType: DataType, fieldNullable: Boolean): String = {
     val columnDefinition = new StringBuilder()
 
     // TODO Consider making gwcbi___seqval_hex a smaller varchar than (1333) since it is part of a clustered index
@@ -509,35 +509,35 @@ trait OutputWriter {
     // nvarchar(max) columns can't be indexed.  Oracle JDBC converts the string datatype to VARCHAR2(255) which is potentially too short.
     val stringDataType = dbProductName match {
       case "Microsoft SQL Server" => "VARCHAR(1333)"
-      case "PostgreSQL" => "VARCHAR(1333)"
-      case "Oracle" => "VARCHAR2(1333)"
-      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      case "PostgreSQL"           => "VARCHAR(1333)"
+      case "Oracle"               => "VARCHAR2(1333)"
+      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
     // Also for string data we need to handle very large text columns that we know of to avoid truncation sql exceptions.
     val largeStringDataType = dbProductName match {
       case "Microsoft SQL Server" => "VARCHAR(max)"
-      case "PostgreSQL" => "VARCHAR"
-      case "Oracle" => "VARCHAR2(32767)" // requires MAX_STRING_SIZE Oracle parameter to be set to EXTENDED.
-      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      case "PostgreSQL"           => "VARCHAR"
+      case "Oracle"               => "VARCHAR2(32767)" // requires MAX_STRING_SIZE Oracle parameter to be set to EXTENDED.
+      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
     // Also for BLOB data we need to handle differently for different platforms.
     val blobDataType = dbProductName match {
       case "Microsoft SQL Server" => "VARBINARY(max)"
-      case "PostgreSQL" => "bytea"
-      case "Oracle" => "BLOB"
-      case _ => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      case "PostgreSQL"           => "bytea"
+      case "Oracle"               => "BLOB"
+      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
     val fieldDataTypeDefinition = if (fieldDataType == StringType)
     // TODO Consider making the determination for the need for very large text columns configurable.
     // These are the OOTB columns we have found so far.
-    if ((tableName.equals("cc_outboundrecord") && fieldName.equals("content"))
-      || (tableName.equals("cc_contactorigvalue") && fieldName.equals("origvalue"))
-      || (tableName.equals("pc_diagratingworksheet") && fieldName.equals("diagnosticcapture"))
-      || (tableName.equals("cc_note") && fieldName.equals("body"))
-    ) largeStringDataType
-    else stringDataType
+      if ((tableName.equals("cc_outboundrecord") && fieldName.equals("content"))
+        || (tableName.equals("cc_contactorigvalue") && fieldName.equals("origvalue"))
+        || (tableName.equals("pc_diagratingworksheet") && fieldName.equals("diagnosticcapture"))
+        || (tableName.equals("cc_note") && fieldName.equals("body"))
+      ) largeStringDataType
+      else stringDataType
     else if (fieldDataType == BinaryType) blobDataType
-    else  getJdbcType(fieldDataType, dialect).databaseTypeDefinition
+    else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
     val nullable = if (!fieldNullable) "NOT NULL" else ""
     columnDefinition.append(s"$fieldName $fieldDataTypeDefinition $nullable")
     columnDefinition.toString()
@@ -556,16 +556,16 @@ trait OutputWriter {
     var totalRowCount = 0L
     val dbProductName = conn.getMetaData.getDatabaseProductName
     try {
-      val  stmt = conn.prepareStatement(updateStmt)
+      val stmt = conn.prepareStatement(updateStmt)
       val setters = rddSchema.fields.map(f => makeSetter(conn, dialect, f.dataType))
       //For Oracle only - map nullTypes to TINYINT for Boolean to work around Oracle JDBC driver issues
-      val nullTypes = rddSchema.fields.map(f => if(dbProductName == "Oracle" && f.dataType == BooleanType) JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType else getJdbcType(f.dataType, dialect).jdbcNullType)
+      val nullTypes = rddSchema.fields.map(f => if (dbProductName == "Oracle" && f.dataType == BooleanType) JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType else getJdbcType(f.dataType, dialect).jdbcNullType)
       val numFields = rddSchema.fields.length
 
       try {
         var rowCount = 0
 
-        df.collect().foreach {row =>
+        df.collect().foreach { row =>
           var i = 0
           while (i < numFields) {
             if (row.isNullAt(i)) {
@@ -619,7 +619,7 @@ trait OutputWriter {
       if (!completed) {
         // The stage must fail.  We got here through an exception path, so
         // let the exception through and tell the user about another problem.
-          log.info(s"$jdbcWriteType - Update failed for $table - $updateStmt")
+        log.info(s"$jdbcWriteType - Update failed for $table - $updateStmt")
       } else {
         log.info(s"$jdbcWriteType - Total rows updated for $table: $totalRowCount rows - $updateStmt")
       }
@@ -640,20 +640,20 @@ trait OutputWriter {
   private def getCommonJDBCType(dt: DataType): Option[JdbcType] = {
 
     dt match {
-      case IntegerType => Option(JdbcType("INTEGER", java.sql.Types.INTEGER))
-      case LongType => Option(JdbcType("BIGINT", java.sql.Types.BIGINT))
-      case DoubleType => Option(JdbcType("DOUBLE PRECISION", java.sql.Types.DOUBLE))
-      case FloatType => Option(JdbcType("REAL", java.sql.Types.FLOAT))
-      case ShortType => Option(JdbcType("INTEGER", java.sql.Types.SMALLINT))
-      case ByteType => Option(JdbcType("BYTE", java.sql.Types.TINYINT))
-      case BooleanType => Option(JdbcType("BIT(1)", java.sql.Types.BIT))
-      case StringType => Option(JdbcType("TEXT", java.sql.Types.CLOB))
-      case BinaryType => Option(JdbcType("BLOB", java.sql.Types.BLOB))
-      case TimestampType => Option(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
-      case DateType => Option(JdbcType("DATE", java.sql.Types.DATE))
+      case IntegerType    => Option(JdbcType("INTEGER", java.sql.Types.INTEGER))
+      case LongType       => Option(JdbcType("BIGINT", java.sql.Types.BIGINT))
+      case DoubleType     => Option(JdbcType("DOUBLE PRECISION", java.sql.Types.DOUBLE))
+      case FloatType      => Option(JdbcType("REAL", java.sql.Types.FLOAT))
+      case ShortType      => Option(JdbcType("INTEGER", java.sql.Types.SMALLINT))
+      case ByteType       => Option(JdbcType("BYTE", java.sql.Types.TINYINT))
+      case BooleanType    => Option(JdbcType("BIT(1)", java.sql.Types.BIT))
+      case StringType     => Option(JdbcType("TEXT", java.sql.Types.CLOB))
+      case BinaryType     => Option(JdbcType("BLOB", java.sql.Types.BLOB))
+      case TimestampType  => Option(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
+      case DateType       => Option(JdbcType("DATE", java.sql.Types.DATE))
       case t: DecimalType => Option(
         JdbcType(s"DECIMAL(${t.precision},${t.scale})", java.sql.Types.DECIMAL))
-      case _ => None
+      case _              => None
     }
   }
 
@@ -669,40 +669,40 @@ trait OutputWriter {
                           conn: Connection,
                           dialect: JdbcDialect,
                           dataType: DataType): JDBCValueSetter = dataType match {
-    case IntegerType =>
+    case IntegerType      =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setInt(pos + 1, row.getInt(pos))
-    case LongType =>
+    case LongType         =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setLong(pos + 1, row.getLong(pos))
-    case DoubleType =>
+    case DoubleType       =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setDouble(pos + 1, row.getDouble(pos))
-    case FloatType =>
+    case FloatType        =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setFloat(pos + 1, row.getFloat(pos))
-    case ShortType =>
+    case ShortType        =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setInt(pos + 1, row.getShort(pos))
-    case ByteType =>
+    case ByteType         =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setInt(pos + 1, row.getByte(pos))
-    case BooleanType =>
+    case BooleanType      =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setBoolean(pos + 1, row.getBoolean(pos))
-    case StringType =>
+    case StringType       =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setString(pos + 1, row.getString(pos))
-    case BinaryType =>
+    case BinaryType       =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setBytes(pos + 1, row.getAs[Array[Byte]](pos))
-    case TimestampType =>
+    case TimestampType    =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setTimestamp(pos + 1, row.getAs[java.sql.Timestamp](pos))
-    case DateType =>
+    case DateType         =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setDate(pos + 1, row.getAs[java.sql.Date](pos))
-    case t: DecimalType =>
+    case t: DecimalType   =>
       (stmt: PreparedStatement, row: Row, pos: Int) =>
         stmt.setBigDecimal(pos + 1, row.getDecimal(pos))
     case ArrayType(et, _) =>
@@ -714,7 +714,7 @@ trait OutputWriter {
           typeName,
           row.getSeq[AnyRef](pos).toArray)
         stmt.setArray(pos + 1, array)
-    case _ =>
+    case _                =>
       (_: PreparedStatement, _: Row, pos: Int) =>
         throw new IllegalArgumentException(
           s"Can't translate non-null value for field $pos")
@@ -724,30 +724,30 @@ trait OutputWriter {
    * If differences in columns, ADD or DROP necessary columns from database table to align definitions, and re-check
    * for a match between database and file schema definitions.
    *
-   * @param fileDataFrame based on the parquet file format
+   * @param fileDataFrame  based on the parquet file format
    * @param jdbcSchemaName database schema name
-   * @param tableName is the name of the database table we being compared to
-   * @param url database url
-   * @param user database user name
-   * @param pswd database password
+   * @param tableName      is the name of the database table we being compared to
+   * @param url            database url
+   * @param user           database user name
+   * @param pswd           database password
    * @parm spark is the spark session.
    * @param jdbcWriteType Merge vs Raw to determine exclusion of internal 'gwcbi__' columns
-   *                               when comparing schemas.  When merging data we remove those columns
-   *                               from the data set before saving the data so we don't want to check
-   *                               for them when comparing to the schema definition in the database.
+   *                      when comparing schemas.  When merging data we remove those columns
+   *                      from the data set before saving the data so we don't want to check
+   *                      for them when comparing to the schema definition in the database.
    * @return Boolean indicating if the table schema definition is the same as the parquet file schema definition
    */
   //TODO Consider renaming this function (schemasAreConsistent) to indicate we're doing more than just checking for consistency
   def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
-                          user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
+                           user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
 
     if (tableExists(tableName, url, user, pswd)) {
       // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
       val sql = "(select * from " + jdbcSchemaName + "." + tableName + " where 1=2) as " + tableName
-//      val sql = jdbcSchemaName + "." + tableName
+      //      val sql = jdbcSchemaName + "." + tableName
       val tableDataFrame = spark.read.format("jdbc")
         .option("url", url)
-        .option("dbtable",sql)
+        .option("dbtable", sql)
         .option("user", user)
         .option("password", pswd)
         .load()
@@ -757,17 +757,23 @@ trait OutputWriter {
       //Derive the product name from the url to avoid having to create or pass in a connection
       // to access the metadata object.
       val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
-        "Microsoft SQL Server"}
-      else { if (url.toLowerCase.contains("postgresql")) {
-        "PostgreSQL"}  else {
-        if (url.toLowerCase.contains("oracle")) {
-        "Oracle"} }}
+        "Microsoft SQL Server"
+      }
+      else {
+        if (url.toLowerCase.contains("postgresql")) {
+          "PostgreSQL"
+        } else {
+          if (url.toLowerCase.contains("oracle")) {
+            "Oracle"
+          }
+        }
+      }
 
       // Get the schema definition for the data read from the database table
       val tableSchemaDef = tableDataFrame.schema
 
       // Get the schema definition for the data read from the parquet file.
-      val fileSchemaDef  = if (jdbcWriteType == JdbcWriteType.Merged) {
+      val fileSchemaDef = if (jdbcWriteType == JdbcWriteType.Merged) {
         val dropList = fileDataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
         fileDataFrame.drop(dropList: _*).schema
       } else {
@@ -776,8 +782,8 @@ trait OutputWriter {
 
       //Determine if columns need to be added or removed from the database table based on
       // changes to the parquet file
-      val fileMapSet = fileSchemaDef.map(rec=>(rec.name,rec.dataType,rec.nullable)).toSet
-      val tableMapSet = tableSchemaDef.map(rec=>(rec.name,rec.dataType,rec.nullable)).toSet
+      val fileMapSet = fileSchemaDef.map(rec => (rec.name, rec.dataType, rec.nullable)).toSet
+      val tableMapSet = tableSchemaDef.map(rec => (rec.name, rec.dataType, rec.nullable)).toSet
       val newFileColumns = fileMapSet diff tableMapSet
       //val missingFileColumns = tableMapSet diff fileMapSet
 
@@ -787,7 +793,7 @@ trait OutputWriter {
       //ADD COLUMNS TO DATABASE TABLE THAT HAVE BEEN ADDED TO PARQUET FILE
       // Check to see if there are columns in the parquet file that are not in the database table.
       // If there are we are going to build the ALTER TABLE statement and execute the statement.
-      if(!newFileColumns.isEmpty) {
+      if (!newFileColumns.isEmpty) {
         log.warn(s"New File Columns: ${newFileColumns.toString()}")
         for (columnDataFrameDefinition <- newFileColumns) {
           val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName.toString, tableName, columnDataFrameDefinition._1, columnDataFrameDefinition._2, columnDataFrameDefinition._3)
@@ -827,37 +833,38 @@ trait OutputWriter {
       // connection and check for schema consistency using the new structures that we just performed ALTER TABLE on.
       // Since we handled all of the added or removed columns, any failure at this point will be on structure changes we
       // cannot handle via code, and the DDL differences will be logged during the second call to schemasAreConsistent.
-      if(databaseDDL==fileDDL) {
+      if (databaseDDL == fileDDL) {
         true
       } else { // instead of just logging "false", we need to check to see if there were table DDL changes executed
-          if(!newFileColumns.isEmpty) {
-            // check the schema comparison again, but now with the new table structure following ALTER statements
-            val newComparison = schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
-            if(newComparison) { // if its fine, just return true
-              true}
-            else { // if there are still problems, return false - the second call to schemasAreConsistent will have logged any additional issues
-              false
-            }
+        if (!newFileColumns.isEmpty) {
+          // check the schema comparison again, but now with the new table structure following ALTER statements
+          val newComparison = schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
+          if (newComparison) { // if its fine, just return true
+            true
           }
-          else { //if there were not any ALTER statements to execute, just fail as normal and log message
-            val logMsg = (s"""
-                             |
-                             |
-                             | $jdbcWriteType table definition for '$tableName' does not match parquet fingerprint '$schemaFingerprint'.  Bypassing updates for fingerprint $schemaFingerprint.
-                             |
-                             | $tableName $jdbcWriteType DB Table Schema:
-                             | ${"-" * (tableName.length + jdbcWriteType.toString.length + 18)}
-                             | ${databaseDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
-                             |
-                             | $tableName Parquet Schema for Fingerprint $schemaFingerprint:
-                             | ${"-" * (tableName.length + schemaFingerprint.length + 33)}
-                             | ${fileDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
-                             |""")
-            log.warn(logMsg)
-            log.warn(s"Database Table Schema Definition: $tableSchemaDef")
-            log.warn(s"File Schema Definition: $fileSchemaDef")
+          else { // if there are still problems, return false - the second call to schemasAreConsistent will have logged any additional issues
             false
           }
+        }
+        else { //if there were not any ALTER statements to execute, just fail as normal and log message
+          val logMsg = (s"""
+                           |
+                           |
+                           | $jdbcWriteType table definition for '$tableName' does not match parquet fingerprint '$schemaFingerprint'.  Bypassing updates for fingerprint $schemaFingerprint.
+                           |
+                           | $tableName $jdbcWriteType DB Table Schema:
+                           | ${"-" * (tableName.length + jdbcWriteType.toString.length + 18)}
+                           | ${databaseDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
+                           |
+                           | $tableName Parquet Schema for Fingerprint $schemaFingerprint:
+                           | ${"-" * (tableName.length + schemaFingerprint.length + 33)}
+                           | ${fileDDL.stripPrefix(s"CREATE TABLE $tableName (").stripSuffix(")")}
+                           |""")
+          log.warn(logMsg)
+          log.warn(s"Database Table Schema Definition: $tableSchemaDef")
+          log.warn(s"File Schema Definition: $fileSchemaDef")
+          false
+        }
       }
     }
     else {
@@ -880,8 +887,8 @@ trait OutputWriter {
   }
 
   /**
-    * Converts the nested column values into a string for type StructType
-    */
+   * Converts the nested column values into a string for type StructType
+   */
   private def flattenDataframe(df: DataFrame): DataFrame = {
 
     df.schema.fields.foldLeft(df)((accumDf, field) => {
@@ -896,8 +903,8 @@ trait OutputWriter {
   private val stringifyRowUDF: UserDefinedFunction = udf[String, Row](parseColumn)
 
   /**
-    * The method converts the BinaryType data back to the string
-    */
+   * The method converts the BinaryType data back to the string
+   */
   private def parseColumn: Row => String = {
     row: Row =>
       if (row == null)
@@ -918,25 +925,25 @@ trait OutputWriter {
   }
 
   /** Constructs the correct path to local filesystem or to S3 location to write CSVs to.
-    *
-    * @param tableDataFrameWrapperForMicroBatch A DataFrameForMicroBatch with the table info
-    * @return String with the correct path FOLDER to write the CSV
-    */
+   *
+   * @param tableDataFrameWrapperForMicroBatch A DataFrameForMicroBatch with the table info
+   * @return String with the correct path FOLDER to write the CSV
+   */
   def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String
 
   /** Constructs the correct path to local filesystem or to S3 location to write YAMLs to.
-    *
-    * @param tableDataFrameWrapperForMicroBatch A DataFrameForMicroBatch with the table info
-    * @return String with the correct path FILE to write the SCHEMA
-    */
+   *
+   * @param tableDataFrameWrapperForMicroBatch A DataFrameForMicroBatch with the table info
+   * @return String with the correct path FILE to write the SCHEMA
+   */
   def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String
 
   /** Build the path to a common folder structure: PREFIX/table/timestamp
-    *
-    * @param pathPrefix A DataFrame corresponding to a table
-    * @param tableDataFrameWrapperForMicroBatch has the data to be written
-    * @return the path to the folder
-    */
+   *
+   * @param pathPrefix                         A DataFrame corresponding to a table
+   * @param tableDataFrameWrapperForMicroBatch has the data to be written
+   * @return the path to the folder
+   */
   def getBasePathToFolder(pathPrefix: String, tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
     val pathWithTableName = s"$pathPrefix/${tableDataFrameWrapperForMicroBatch.tableName}/${tableDataFrameWrapperForMicroBatch.schemaFingerprint}"
     if (saveIntoTimestampDirectory) {
@@ -947,23 +954,23 @@ trait OutputWriter {
   }
 
   /** Write a table's schema to a .yaml file to either local filesystem or to S3. In both
-    * cases, calling makeSchemaString on the table's DataFrame to collect the table's schema
-    * into a yaml formatted string.
-    *
-    * In the case of local output, write string to schema file
-    *
-    * In the case of S3 output, upload string as an object to S3
-    *
-    * @param tableDataFrameWrapperForMicroBatch has the data to be written
-    */
+   * cases, calling makeSchemaString on the table's DataFrame to collect the table's schema
+   * into a yaml formatted string.
+   *
+   * In the case of local output, write string to schema file
+   *
+   * In the case of S3 output, upload string as an object to S3
+   *
+   * @param tableDataFrameWrapperForMicroBatch has the data to be written
+   */
   def writeSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit
 
   /** Collects a table's DataFrame's schema, pre-processes it , then writes it to a String
-    * in Yaml format.
-    *
-    * @param tableDataFrame A DataFrame corresponding to a table
-    * @return Yaml formatted string with the table's schema fields
-    */
+   * in Yaml format.
+   *
+   * @param tableDataFrame A DataFrame corresponding to a table
+   * @return Yaml formatted string with the table's schema fields
+   */
   def makeSchemaYamlString(tableDataFrame: DataFrame): String = {
     val schemaFieldsList = tableDataFrame.schema.fields.toList.map(field => {
       Map("name" -> field.name,
