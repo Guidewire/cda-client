@@ -32,7 +32,7 @@ class CLIArgumentsProcessor(args: Seq[String]) extends ScallopConf(args) with CL
 
   // Make a public accessor to the actual value
   override val configFilePath: String = configFilePathScallopOption()
-  override val singleTableValue: String = singleTableValueScallopOption() //SRhodes - 20200427
+  override val singleTableValue: String = singleTableValueScallopOption()
 
   // This will be called during the verify(), if there is a problem with the input args
   override def onError(e: Throwable): Unit = e match {
