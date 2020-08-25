@@ -813,34 +813,6 @@ trait OutputWriter {
         log.warn(s"NO NEW FILE COLUMNS")
       }
 
-      //DROP COLUMNS FROM DATABASE TABLE THAT HAVE BEEN REMOVED FROM PARQUET FILE
-      // Check to see if there are columns in the database table that are not in the parquet file.
-      // If there are we are going to build the ALTER TABLE statement and execute the statement.
-/*      if(!missingFileColumns.isEmpty) {
-        log.warn(s"Deleted File Columns: ${missingFileColumns.toString()}")
-        for(columnDataFrameDefinition <- missingFileColumns) {
-          val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName DROP COLUMN ${columnDataFrameDefinition._1}"
-          log.warn(s"Statement to be executed: $alterTableStatement")
-          try {
-            // Execute the table create DDL
-            val stmt = databaseConnection.createStatement
-            stmt.execute(alterTableStatement)
-            stmt.close()
-            databaseConnection.commit()
-            log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-          } catch {
-            case e: Exception =>
-              databaseConnection.rollback()
-              databaseConnection.close()
-              log.warn(s"ALTER TABLE - ROLLBACK '$tableName' for alter table statement $alterTableStatement - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-              throw e
-          }
-        }
-      } else {
-        log.warn(s"NO MISSING FILE COLUMNS")
-      }
-*/
-
       databaseConnection.close()
 
       // Generate the table create ddl statement based on the schema definition of the database table.
@@ -856,14 +828,9 @@ trait OutputWriter {
       // Since we handled all of the added or removed columns, any failure at this point will be on structure changes we
       // cannot handle via code, and the DDL differences will be logged during the second call to schemasAreConsistent.
       if(databaseDDL==fileDDL) {
-// IN PLACE FOR DEBUGGING AND TESTING PURPOSES SO COMMENTED OUT
-//        val logMsg = s"""SCHEMAS MATCH -
-//        | DATABASE DDL: $databaseDDL
-//        | FILE DDL: $fileDDL"""
-//        log.info(logMsg)
         true
       } else { // instead of just logging "false", we need to check to see if there were table DDL changes executed
-          if(!newFileColumns.isEmpty) {// || !missingFileColumns.isEmpty) {
+          if(!newFileColumns.isEmpty) {
             // check the schema comparison again, but now with the new table structure following ALTER statements
             val newComparison = schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
             if(newComparison) { // if its fine, just return true
