@@ -7,5 +7,5 @@ savepointsLocation:
   path: dummy/path
 outputSettings:
   includeColumnNames: true
-  saveAsSingleFileCSV: true
+  saveAsSingleFile: true
   saveIntoTimestampDirectory: true

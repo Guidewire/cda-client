@@ -7,5 +7,5 @@ savepointsLocation:
   path: dummy/path
 outputSettings:
   includeColumnNames: bananas #this is not a boolean
-  saveAsSingleFileCSV: true
+  saveAsSingleFile: true
   saveIntoTimestampDirectory: true
