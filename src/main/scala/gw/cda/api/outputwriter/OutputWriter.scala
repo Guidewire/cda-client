@@ -272,7 +272,7 @@ trait OutputWriter {
       // Create alternate keys for Merged data.  Raw data will not have any alternate keys since columns other than
       // the PK can be null (due to records for deletes).
       if (jdbcWriteType == JdbcWriteType.Merged) {
-        var ddlAK1 = "ALTER TABLE " + tableName + " ADD CONSTRAINT " + tableNameNoSchema + "_ak1 UNIQUE "
+        var ddlAK1 = s"ALTER TABLE $tableName ADD CONSTRAINT $tableNameNoSchema _ak1 UNIQUE "
         if (tableNameNoSchema.startsWith("pctl_") || tableNameNoSchema.startsWith("cctl_") || tableNameNoSchema.startsWith("bctl_") || tableNameNoSchema.startsWith("abtl_")) {
           ddlAK1 = ddlAK1 + "(\"typecode\")"
         }
