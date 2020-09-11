@@ -459,7 +459,7 @@ class TableReader(clientConfig: ClientConfig) {
     log.info(s"Reading '${tableTimestampSubfolderInfo.tableName}' from $s3aURL, on thread ${Thread.currentThread()}")
     // Adding in column renaming capabilities - we ran across the column name "interval", and cannot get the jdbc driver to stop creating the column with
     //   double quotes around it in the table definition. When we execute the Merged code, it thinks the value is a literal and won't insert.
-    //   Renamed "interval" to "interval_".  Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
+    //   Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
     val dataFrame = spark.sqlContext.read.parquet(s3aURL)
       .withColumnRenamed("interval", "interval_")
     //      .withColumnRenamed("anotherone", "anotherone_")
