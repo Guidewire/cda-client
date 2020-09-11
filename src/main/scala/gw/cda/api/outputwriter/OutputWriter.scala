@@ -742,7 +742,7 @@ trait OutputWriter {
 
     if (tableExists(tableName, url, user, pswd)) {
       // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
-      val sql = "(select * from " + jdbcSchemaName + "." + tableName + " where 1=2) as " + tableName
+      val sql = s"(select * from $jdbcSchemaName.$tableName where 1=2) as $tableName"
       //      val sql = jdbcSchemaName + "." + tableName
       val tableDataFrame = spark.read.format("jdbc")
         .option("url", url)
