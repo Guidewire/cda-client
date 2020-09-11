@@ -209,10 +209,9 @@ trait OutputWriter {
     val dbProductName = dbm.getDatabaseProductName
 
     val tableNameCaseSensitive = dbProductName match {
-      case "Microsoft SQL Server" => tableNameNoSchema
-      case "PostgreSQL"           => tableNameNoSchema
-      case "Oracle"               => tableNameNoSchema.toUpperCase
-      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      case "Microsoft SQL Server" | "PostgreSQL" => tableNameNoSchema
+      case "Oracle"                              => tableNameNoSchema.toUpperCase
+      case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
     val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next()
