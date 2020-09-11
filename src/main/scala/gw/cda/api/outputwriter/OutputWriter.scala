@@ -507,8 +507,7 @@ trait OutputWriter {
     // Explicitly set the data type for string data to avoid nvarchar(max) and varchar2 types that are potentially too long or short.
     // nvarchar(max) columns can't be indexed.  Oracle JDBC converts the string datatype to VARCHAR2(255) which is potentially too short.
     val stringDataType = dbProductName match {
-      case "Microsoft SQL Server" => "VARCHAR(1333)"
-      case "PostgreSQL"           => "VARCHAR(1333)"
+      case "Microsoft SQL Server" | "PostgreSQL" => "VARCHAR(1333)"
       case "Oracle"               => "VARCHAR2(1333)"
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
