@@ -479,7 +479,7 @@ trait OutputWriter {
     }
     // Build the list of columns in alphabetic order.
     schema.fields.sortBy(f => f.name).foreach { field =>
-      val nullable = if (notNullCols.contains(field.name) || !field.nullable) false else true
+      val nullable = !notNullCols.contains(field.name) && field.nullable
       val name = dialect.quoteIdentifier(field.name)
       val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName, tableName, name, field.dataType, nullable)
       allTableColumnsDefinitions.append(s"$columnDefinition, ")
