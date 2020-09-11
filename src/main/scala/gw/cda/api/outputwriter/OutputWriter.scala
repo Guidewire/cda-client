@@ -418,7 +418,7 @@ trait OutputWriter {
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
-      val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE \"id\" = ?"
+      val updateStatement = s"UPDATE $tableName SET $colNamesForSetClause WHERE \"id\" = ?"
       log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
