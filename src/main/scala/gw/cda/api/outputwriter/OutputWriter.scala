@@ -874,13 +874,11 @@ trait OutputWriter {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
     val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableName, Array("TABLE"))
-    if (tables.next) {
-      connection.close()
-      true
-    } else {
-      connection.close()
-      false
-    }
+      try {
+        return tables.next != null
+      } finally
+        connection.close()
+      }
 
   }
 
