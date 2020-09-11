@@ -756,15 +756,10 @@ trait OutputWriter {
       // to access the metadata object.
       val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
         "Microsoft SQL Server"
-      }
-      else {
-        if (url.toLowerCase.contains("postgresql")) {
-          "PostgreSQL"
-        } else {
-          if (url.toLowerCase.contains("oracle")) {
-            "Oracle"
-          }
-        }
+      } else if (url.toLowerCase.contains("postgresql")) {
+        "PostgreSQL"
+      } else if (url.toLowerCase.contains("oracle")) {
+        "Oracle"
       }
 
       // Get the schema definition for the data read from the database table
