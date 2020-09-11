@@ -259,7 +259,7 @@ trait OutputWriter {
     if (url.toLowerCase.contains("sqlserver") || url.toLowerCase.contains("postgresql") || url.toLowerCase.contains("oracle")) {
 
       // Create primary key.
-      var ddlPK = "ALTER TABLE " + tableName + " ADD CONSTRAINT " + tableNameNoSchema + "_pk PRIMARY KEY "
+      var ddlPK = s"ALTER TABLE $tableName ADD CONSTRAINT $tableNameNoSchema _pk PRIMARY KEY "
       if (jdbcWriteType == JdbcWriteType.Merged) {
         ddlPK = ddlPK + "(\"id\")"
       }
