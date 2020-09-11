@@ -120,7 +120,7 @@ class TableReader(clientConfig: ClientConfig) {
 
       // Filter the manifestMap if this is run for specific tables.
       var tablesToInclude: String = Option(clientConfig.outputSettings.tablesToInclude).getOrElse("")
-      //If command line argument is present, us it instead of yaml value.
+      //If command line argument is present, use it instead of yaml value.
       if (!singleTableName.isEmpty) {
         tablesToInclude = singleTableName
       }
