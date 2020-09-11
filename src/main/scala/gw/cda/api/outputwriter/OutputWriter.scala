@@ -444,7 +444,7 @@ trait OutputWriter {
     if (delCnt > 0) {
       val deleteSchema = DeleteDF.schema
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
-      val deleteStatement = "DELETE FROM " + tableName + " WHERE \"id\" = ?"
+      val deleteStatement = s"DELETE FROM $tableName WHERE \"id\" = ?"
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
