@@ -158,8 +158,7 @@ class TableReader(clientConfig: ClientConfig) {
               // ALTER TABLE statements against the tables as the parquet file schemas change
               // When saving to JDBC, we want to be sure we only return one fingerprint in each load to avoid schema conflict.
               Seq(tmpFingerprintsWithUnprocessedRecords.iterator.next())
-            }
-            else {
+            } else {
               tmpFingerprintsWithUnprocessedRecords
             }
           TableS3BaseLocationWithFingerprintsWithUnprocessedRecords(tableName, baseUri, fingerprintsWithUnprocessedRecords)
@@ -291,7 +290,6 @@ class TableReader(clientConfig: ClientConfig) {
             clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword, spark, outputWriter.JdbcWriteType.Merged)) {
             true
           } else {
-            //log.warn(s"Merged data table definition for '$tableName' does not match fingerprint ${schemaFingerprint}.  Bypassing updates for fingerprint ${schemaFingerprint}.")
             false
           }
         } else {
@@ -462,7 +460,6 @@ class TableReader(clientConfig: ClientConfig) {
     //   Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
     val dataFrame = spark.sqlContext.read.parquet(s3aURL)
       .withColumnRenamed("interval", "interval_")
-    //      .withColumnRenamed("anotherone", "anotherone_")
     val dataFrameNoInternalColumns = dropIrrelevantInternalColumns(dataFrame)
     DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint,
       dataFrameNoInternalColumns)

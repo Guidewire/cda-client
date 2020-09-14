@@ -67,6 +67,23 @@ trait OutputWriter {
 
     // Process file write.
     if (clientConfig.outputSettings.saveIntoFile) {
+
+      clientConfig.outputSettings.fileFormat.toLowerCase match {
+        case "csv" => {
+          log.info(s"Writing '$tableName' DataFrame as CSV to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
+          this.writeCSV(tableDataFrameWrapperForMicroBatch)
+          this.writeSchema(tableDataFrameWrapperForMicroBatch)
+          log.info(s"Wrote '$tableName' DataFrame as CSV complete, with columns ${tableDataFrameWrapperForMicroBatch.dataFrame.columns.toList}")
+        }
+        case "parquet" => {
+          log.info(s"Writing '$tableName' DataFrame as PARQUET to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
+          this.writeParquet(tableDataFrameWrapperForMicroBatch)
+          log.info(s"Wrote '$tableName' DataFrame as PARQUET complete")
+        }
+        case other => throw new Exception(s"Unknown output file format $other")
+      }
+
+/*
       if (clientConfig.outputSettings.fileFormat.toLowerCase == "csv") {
         log.info(s"Writing '$tableName' DataFrame as CSV to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
         this.writeCSV(tableDataFrameWrapperForMicroBatch)
@@ -77,6 +94,7 @@ trait OutputWriter {
         this.writeParquet(tableDataFrameWrapperForMicroBatch)
         log.info(s"Wrote '$tableName' DataFrame as PARQUET complete")
       }
+*/
     }
 
     if (clientConfig.outputSettings.saveIntoJdbcRaw && clientConfig.outputSettings.saveIntoJdbcMerged) {
@@ -195,13 +213,13 @@ trait OutputWriter {
    */
   private def writeJdbcRaw(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
 
-    val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
-    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName // + "_" + tableDataFrameWrapperForMicroBatch.schemaFingerprintTimestamp
+    val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
+    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
 
     log.info(s"*** Writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
 
-    val InsertDF = tableDataFrameWrapperForMicroBatch.dataFrame
-    InsertDF.cache()
+    val insertDF = tableDataFrameWrapperForMicroBatch.dataFrame
+    insertDF.cache()
 
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionRaw.jdbcUrl
@@ -218,7 +236,7 @@ trait OutputWriter {
 
     // Get some data we will need for later.
     val dialect = JdbcDialects.get(url)
-    val insertSchema = InsertDF.schema
+    val insertSchema = insertDF.schema
     val batchSize = 5000 // TODO consider making this configurable.
 
     // Create the table if it does not already exist.
@@ -242,7 +260,7 @@ trait OutputWriter {
     log.info(s"Raw - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw)
+    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw)
 
     log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
   }
@@ -259,7 +277,7 @@ trait OutputWriter {
     if (url.toLowerCase.contains("sqlserver") || url.toLowerCase.contains("postgresql") || url.toLowerCase.contains("oracle")) {
 
       // Create primary key.
-      var ddlPK = s"ALTER TABLE $tableName ADD CONSTRAINT $tableNameNoSchema _pk PRIMARY KEY "
+      var ddlPK = s"ALTER TABLE $tableName ADD CONSTRAINT ${tableNameNoSchema}_pk PRIMARY KEY "
       if (jdbcWriteType == JdbcWriteType.Merged) {
         ddlPK = ddlPK + "(\"id\")"
       }
@@ -272,7 +290,7 @@ trait OutputWriter {
       // Create alternate keys for Merged data.  Raw data will not have any alternate keys since columns other than
       // the PK can be null (due to records for deletes).
       if (jdbcWriteType == JdbcWriteType.Merged) {
-        var ddlAK1 = s"ALTER TABLE $tableName ADD CONSTRAINT $tableNameNoSchema _ak1 UNIQUE "
+        var ddlAK1 = s"ALTER TABLE $tableName ADD CONSTRAINT ${tableNameNoSchema}_ak1 UNIQUE "
         if (tableNameNoSchema.startsWith("pctl_") || tableNameNoSchema.startsWith("cctl_") || tableNameNoSchema.startsWith("bctl_") || tableNameNoSchema.startsWith("abtl_")) {
           ddlAK1 = ddlAK1 + "(\"typecode\")"
         }
@@ -310,17 +328,17 @@ trait OutputWriter {
     val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
 
     // Log total rows to be merged for this fingerprint.
-    val totCnt = tableDataFrameWrapperForMicroBatch.dataFrame.count()
-    log.info(s"Merged - $tableName total cnt for all ins/upd/del: ${totCnt.toString}")
+    val totalCount = tableDataFrameWrapperForMicroBatch.dataFrame.count()
+    log.info(s"Merged - $tableName total cnt for all ins/upd/del: ${totalCount.toString}")
 
     // Filter for records to insert and drop unwanted columns.
-    val InsertDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(2, 0))
+    val insertDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(2, 0))
       .drop(dropList: _*)
       .cache()
 
     // Log total rows to be inserted for this fingerprint.
-    val insCnt = InsertDF.count()
-    log.info(s"Merged - $tableName insert cnt after filter: ${insCnt.toString}")
+    val insertCount = insertDF.count()
+    log.info(s"Merged - $tableName insert cnt after filter: ${insertCount.toString}")
 
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionMerged.jdbcUrl
@@ -337,7 +355,7 @@ trait OutputWriter {
 
     // Get some data we will need for later.
     val dialect = JdbcDialects.get(url)
-    val insertSchema = InsertDF.schema
+    val insertSchema = insertDF.schema
     val batchSize = 5000 // TODO consider making this configurable.
 
     // Create the table if it does not already exist.
@@ -362,23 +380,23 @@ trait OutputWriter {
     log.info(s"Merged - $insertStatement")
 
     // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, InsertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
+    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
 
-    InsertDF.unpersist()
+    insertDF.unpersist()
 
     // Filter for records to update.
-    val UpdateDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(4))
+    val updateDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(4))
       .cache()
 
     // Log total rows marked as updates.
-    val UpdCnt = UpdateDF.count()
-    log.info(s"Merged - $tableName update cnt after filter: ${UpdCnt.toString}")
+    val updateCount = updateDF.count()
+    log.info(s"Merged - $tableName update cnt after filter: ${updateCount.toString}")
 
     // Generate and apply update statements based on the latest transaction for each id.
-    if (UpdCnt > 0) {
+    if (updateCount > 0) {
 
       // Get the list of columns
-      val colNamesArray = UpdateDF.columns.toBuffer
+      val colNamesArray = updateDF.columns.toBuffer
       // Remove the id and sequence from the list of columns so we can handle them separately.
       // We will be grouping by the id and the sequence will be set as the first item in the list of columns.
       colNamesArray --= Array("id", "gwcbi___seqval_hex")
@@ -390,7 +408,7 @@ trait OutputWriter {
         // max on first struct field, if equal fall back to second fields, and so on.
         // In this case the first struct field is gwcbi___seqval_hex which will be always
         // be unique for each instance of an id in the group.
-        UpdateDF
+        updateDF
           .selectExpr(Seq("id", s"struct($colNamesString) as otherCols"): _*)
           .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
           .selectExpr("latest.*", "id")
@@ -399,13 +417,13 @@ trait OutputWriter {
       } else {
         // Retain all updates.  Sort so they are applied in the correct order.
         val colVar = colNamesString + ",id"
-        UpdateDF
+        updateDF
           .selectExpr(colVar.split(","): _*)
           .sort(col("gwcbi___seqval_hex").asc)
           .drop(dropList: _*)
           .cache()
       }
-      UpdateDF.unpersist()
+      updateDF.unpersist()
 
       val latestUpdCnt = latestChangeForEachID.count()
       if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
@@ -418,7 +436,8 @@ trait OutputWriter {
       // Build the sql Update statement to be used as a prepared statement for the Updates.
       val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
-      val updateStatement = s"UPDATE $tableName SET $colNamesForSetClause WHERE \"id\" = ?"
+      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ?"""
+//      val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE \"id\" = ?"
       log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
@@ -432,26 +451,27 @@ trait OutputWriter {
 
     // Filter for records to be deleted.
     // Deletes should be relatively rare since most data is retired in InsuranceSuite rather than deleted.
-    val DeleteDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(1))
+    val deleteDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(1))
       .selectExpr("id")
       .cache()
 
     // Log number of records to be deleted.
-    val delCnt = DeleteDF.count()
-    log.info(s"Merged - $tableName delete cnt after filter: ${delCnt.toString}")
+    val deleteCount = deleteDF.count()
+    log.info(s"Merged - $tableName delete cnt after filter: ${deleteCount.toString}")
 
     // Generate and apply delete statements.
-    if (delCnt > 0) {
-      val deleteSchema = DeleteDF.schema
+    if (deleteCount > 0) {
+      val deleteSchema = deleteDF.schema
       // Build the sql Delete statement to be used as a prepared statement for the Updates.
-      val deleteStatement = s"DELETE FROM $tableName WHERE \"id\" = ?"
+      val deleteStatement = s"""DELETE FROM $tableName WHERE "id" = ?"""
+//      val deleteStatement = "DELETE FROM " + tableName + " WHERE \"id\" = ?"
       log.info(s"Merged - $deleteStatement")
 
       // Prepare and execute one delete statement per row in our delete dataframe.
-      updateDataframe(connection, tableName, DeleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
+      updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
 
       tableDataFrameWrapperForMicroBatch.dataFrame.unpersist()
-      DeleteDF.unpersist()
+      deleteDF.unpersist()
     }
     log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
   }
@@ -525,19 +545,21 @@ trait OutputWriter {
       case "Oracle"               => "BLOB"
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val fieldDataTypeDefinition = if (fieldDataType == StringType)
-    // TODO Consider making the determination for the need for very large text columns configurable.
-    // These are the OOTB columns we have found so far.
-      if ((tableName.equals("cc_outboundrecord") && fieldName.equals("content"))
-        || (tableName.equals("cc_contactorigvalue") && fieldName.equals("origvalue"))
-        || (tableName.equals("pc_diagratingworksheet") && fieldName.equals("diagnosticcapture"))
-        || (tableName.equals("cc_note") && fieldName.equals("body"))
-      ) largeStringDataType
-      else stringDataType
-    else if (fieldDataType == BinaryType) blobDataType
-    else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
-    val nullable = if (!fieldNullable) "NOT NULL" else ""
-    columnDefinition.append(s"$fieldName $fieldDataTypeDefinition $nullable")
+    val fieldDataTypeDefinition = if (fieldDataType == StringType) {
+      // TODO Consider making the determination for the need for very large text columns configurable.
+      // These are the OOTB columns we have found so far.
+      (tableName, fieldName) match {
+        case ("cc_outboundrecord", "content") |
+             ("cc_contactorigvalue", "origvalue") |
+             ("pc_diagratingworksheet", "diagnosticcapture") |
+             ("cc_note", "body") => largeStringDataType
+        case _                   => stringDataType
+        }
+      }
+      else if (fieldDataType == BinaryType) blobDataType
+      else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
+    val nullableQualifier = if (!fieldNullable) "NOT NULL" else ""
+    columnDefinition.append(s"$fieldName $fieldDataTypeDefinition $nullableQualifier")
     columnDefinition.toString()
   }
 
@@ -557,7 +579,9 @@ trait OutputWriter {
       val stmt = conn.prepareStatement(updateStmt)
       val setters = rddSchema.fields.map(f => makeSetter(conn, dialect, f.dataType))
       //For Oracle only - map nullTypes to TINYINT for Boolean to work around Oracle JDBC driver issues
-      val nullTypes = rddSchema.fields.map(f => if (dbProductName == "Oracle" && f.dataType == BooleanType) JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType else getJdbcType(f.dataType, dialect).jdbcNullType)
+      val nullTypes = rddSchema.fields
+        .map(f => if (dbProductName == "Oracle" && f.dataType == BooleanType) JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType
+                  else getJdbcType(f.dataType, dialect).jdbcNullType)
       val numFields = rddSchema.fields.length
 
       try {
@@ -573,6 +597,7 @@ trait OutputWriter {
             }
             i = i + 1
           }
+
           stmt.addBatch()
           rowCount += 1
           totalRowCount += 1
@@ -593,7 +618,6 @@ trait OutputWriter {
       completed = true
     } catch {
       case e: SQLException =>
-        //log.info(s"Catch exception for $table - $updateStmt")
         val cause = e.getCause
         val nextcause = e.getNextException
         if (nextcause != null && cause != nextcause) {
@@ -638,18 +662,18 @@ trait OutputWriter {
   private def getCommonJDBCType(dt: DataType): Option[JdbcType] = {
 
     dt match {
-      case IntegerType    => Option(JdbcType("INTEGER", java.sql.Types.INTEGER))
-      case LongType       => Option(JdbcType("BIGINT", java.sql.Types.BIGINT))
-      case DoubleType     => Option(JdbcType("DOUBLE PRECISION", java.sql.Types.DOUBLE))
-      case FloatType      => Option(JdbcType("REAL", java.sql.Types.FLOAT))
-      case ShortType      => Option(JdbcType("INTEGER", java.sql.Types.SMALLINT))
-      case ByteType       => Option(JdbcType("BYTE", java.sql.Types.TINYINT))
-      case BooleanType    => Option(JdbcType("BIT(1)", java.sql.Types.BIT))
-      case StringType     => Option(JdbcType("TEXT", java.sql.Types.CLOB))
-      case BinaryType     => Option(JdbcType("BLOB", java.sql.Types.BLOB))
-      case TimestampType  => Option(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
-      case DateType       => Option(JdbcType("DATE", java.sql.Types.DATE))
-      case t: DecimalType => Option(
+      case IntegerType    => Some(JdbcType("INTEGER", java.sql.Types.INTEGER))
+      case LongType       => Some(JdbcType("BIGINT", java.sql.Types.BIGINT))
+      case DoubleType     => Some(JdbcType("DOUBLE PRECISION", java.sql.Types.DOUBLE))
+      case FloatType      => Some(JdbcType("REAL", java.sql.Types.FLOAT))
+      case ShortType      => Some(JdbcType("INTEGER", java.sql.Types.SMALLINT))
+      case ByteType       => Some(JdbcType("BYTE", java.sql.Types.TINYINT))
+      case BooleanType    => Some(JdbcType("BIT(1)", java.sql.Types.BIT))
+      case StringType     => Some(JdbcType("TEXT", java.sql.Types.CLOB))
+      case BinaryType     => Some(JdbcType("BLOB", java.sql.Types.BLOB))
+      case TimestampType  => Some(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
+      case DateType       => Some(JdbcType("DATE", java.sql.Types.DATE))
+      case t: DecimalType => Some(
         JdbcType(s"DECIMAL(${t.precision},${t.scale})", java.sql.Types.DECIMAL))
       case _              => None
     }
@@ -869,12 +893,20 @@ trait OutputWriter {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
     val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableName, Array("TABLE"))
+/*
       try {
         return tables.next != null
       } finally
         connection.close()
       }
-
+*/
+    if (tables.next) {
+      connection.close()
+      true
+    } else {
+      connection.close()
+      false
+    }
   }
 
   /**
