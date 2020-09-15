@@ -488,7 +488,6 @@ trait OutputWriter {
   def getTableCreateDDL(dialect: JdbcDialect, schema: StructType, tableName: String, jdbcWriteType: JdbcWriteType.Value, dbProductName: String): String = {
     val allTableColumnsDefinitions = new StringBuilder()
 
-    //TODO Should this be set up as defined list(s)?
     // Define specific columns we want to set as NOT NULL. Everything coming out of CDA parquet files is defined as nullable so
     // we do this to ensure there are columns available to set as PKs and/or AKs.
     var notNullCols = List("id", "gwcbi___operation", "gwcbi___seqval_hex")
@@ -523,7 +522,6 @@ trait OutputWriter {
   def buildDDLColumnDefinition(dialect: JdbcDialect, dbProductName: String, tableName: String, fieldName: String, fieldDataType: DataType, fieldNullable: Boolean): String = {
     val columnDefinition = new StringBuilder()
 
-    // TODO Consider making gwcbi___seqval_hex a smaller varchar than (1333) since it is part of a clustered index
     // Explicitly set the data type for string data to avoid nvarchar(max) and varchar2 types that are potentially too long or short.
     // nvarchar(max) columns can't be indexed.  Oracle JDBC converts the string datatype to VARCHAR2(255) which is potentially too short.
     val stringDataType = dbProductName match {
@@ -759,7 +757,7 @@ trait OutputWriter {
    *                      for them when comparing to the schema definition in the database.
    * @return Boolean indicating if the table schema definition is the same as the parquet file schema definition
    */
-  //TODO Consider renaming this function (schemasAreConsistent) to indicate we're doing more than just checking for consistency
+
   def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
                            user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
 
@@ -1007,7 +1005,6 @@ trait OutputWriter {
 
 }
 
-// TODO need to rework object OutputWriter now that there are other config parameters needed for additional outputs
 object OutputWriter {
 
   // The apply() is like a builder, caller can create without using the 'new' keyword

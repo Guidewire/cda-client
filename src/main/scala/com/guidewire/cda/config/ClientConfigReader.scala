@@ -260,7 +260,7 @@ object ClientConfigReader {
    */
   private def validateJdbcConnectionRaw(clientConfig: ClientConfig): Unit = {
     // If saving to JDBC then validate the jdbcConnection section.
-    if (clientConfig.outputSettings.saveIntoJdbcRaw || clientConfig.outputSettings.saveIntoJdbcMerged) {
+    if (clientConfig.outputSettings.saveIntoJdbcRaw) {
       try {
         require(clientConfig.jdbcConnectionRaw != null, "jdbcConnectionRaw section is missing in the config file")
       } catch {
@@ -301,7 +301,7 @@ object ClientConfigReader {
    */
   private def validateJdbcConnectionMerged(clientConfig: ClientConfig): Unit = {
     // If saving to JDBC then validate the jdbcConnection section.
-    if (clientConfig.outputSettings.saveIntoJdbcMerged || clientConfig.outputSettings.saveIntoJdbcMerged) {
+    if (clientConfig.outputSettings.saveIntoJdbcMerged) {
       try {
         require(clientConfig.jdbcConnectionMerged != null, "validateJdbcConnectionMerged section is missing in the config file")
       } catch {
