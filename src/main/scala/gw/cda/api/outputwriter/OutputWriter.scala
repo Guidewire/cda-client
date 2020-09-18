@@ -277,28 +277,28 @@ trait OutputWriter {
     if (url.toLowerCase.contains("sqlserver") || url.toLowerCase.contains("postgresql") || url.toLowerCase.contains("oracle")) {
 
       // Create primary key.
-      var ddlPK = s"ALTER TABLE $tableName ADD CONSTRAINT ${tableNameNoSchema}_pk PRIMARY KEY "
+      var ddlPrimaryKey = s"ALTER TABLE $tableName ADD CONSTRAINT ${tableNameNoSchema}_pk PRIMARY KEY "
       if (jdbcWriteType == JdbcWriteType.Merged) {
-        ddlPK = ddlPK + "(\"id\")"
+        ddlPrimaryKey = ddlPrimaryKey + "(\"id\")"
       }
       else {
-        ddlPK = ddlPK + "(\"id\", \"gwcbi___seqval_hex\")"
+        ddlPrimaryKey = ddlPrimaryKey + "(\"id\", \"gwcbi___seqval_hex\")"
       }
-      log.info(s"$jdbcWriteType - $ddlPK")
-      stmt.execute(ddlPK)
+      log.info(s"$jdbcWriteType - $ddlPrimaryKey")
+      stmt.execute(ddlPrimaryKey)
 
-      // Create alternate keys for Merged data.  Raw data will not have any alternate keys since columns other than
+      // Create index for Merged data.  Raw data will not have any additional indexes since columns other than
       // the PK can be null (due to records for deletes).
       if (jdbcWriteType == JdbcWriteType.Merged) {
-        var ddlAK1 = s"ALTER TABLE $tableName ADD CONSTRAINT ${tableNameNoSchema}_ak1 UNIQUE "
+        var ddlIndex = s"CREATE INDEX ${tableNameNoSchema}_idx1 ON $tableName "
         if (tableNameNoSchema.startsWith("pctl_") || tableNameNoSchema.startsWith("cctl_") || tableNameNoSchema.startsWith("bctl_") || tableNameNoSchema.startsWith("abtl_")) {
-          ddlAK1 = ddlAK1 + "(\"typecode\")"
+          ddlIndex = ddlIndex + "(\"typecode\")"
         }
         else {
-          ddlAK1 = ddlAK1 + "(\"publicid\")"
+          ddlIndex = ddlIndex + "(\"publicid\")"
         }
-        log.info(s"$jdbcWriteType - $ddlAK1")
-        stmt.execute(ddlAK1)
+        log.info(s"$jdbcWriteType - $ddlIndex")
+        stmt.execute(ddlIndex)
       }
 
     } else {
@@ -546,12 +546,13 @@ trait OutputWriter {
     val fieldDataTypeDefinition = if (fieldDataType == StringType) {
       // TODO Consider making the determination for the need for very large text columns configurable.
       // These are the OOTB columns we have found so far.
-      (tableName, fieldName) match {
-        case ("cc_outboundrecord", "content") |
-             ("cc_contactorigvalue", "origvalue") |
-             ("pc_diagratingworksheet", "diagnosticcapture") |
-             ("cc_note", "body") => largeStringDataType
-        case _                   => stringDataType
+      val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
+      (tableNameNoSchema, fieldName) match {
+        case ("cc_outboundrecord", "\"content\"") |
+             ("cc_contactorigvalue", "\"origvalue\"") |
+             ("pc_diagratingworksheet", "\"diagnosticcapture\"") |
+             ("cc_note", "\"body\"") => largeStringDataType
+        case _                       => stringDataType
         }
       }
       else if (fieldDataType == BinaryType) blobDataType
