@@ -764,7 +764,7 @@ trait OutputWriter {
 
     if (tableExists(tableName, url, user, pswd)) {
       // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
-      val sql = s"(select * from $jdbcSchemaName.$tableName where 1=2) as $tableName"
+      val sql = s"(select * from $jdbcSchemaName.$tableName where 1=2)"
       //      val sql = jdbcSchemaName + "." + tableName
       val tableDataFrame = spark.read.format("jdbc")
         .option("url", url)
@@ -891,14 +891,15 @@ trait OutputWriter {
   def tableExists(tableName: String, url: String, user: String, pswd: String): Boolean = {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableName, Array("TABLE"))
-/*
-      try {
-        return tables.next != null
-      } finally
-        connection.close()
-      }
-*/
+    val dbProductName = dbm.getDatabaseProductName
+    val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
+    val tableNameCaseSensitive = dbProductName match {
+      case "Microsoft SQL Server" | "PostgreSQL" => tableNameNoSchema
+      case "Oracle"                              => tableNameNoSchema.toUpperCase
+      case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
+    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+
     if (tables.next) {
       connection.close()
       true

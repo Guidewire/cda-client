@@ -373,6 +373,7 @@ class TableReader(clientConfig: ClientConfig) {
     val lastReadPoint = savepointsProcessor.getSavepoint(tableInfo.tableName)
 
     // determine the next read point, based on the last save point
+/*
     val nextReadPointKey = if (lastReadPoint.isDefined) {
       // must be incremented to avoid re-reading last folder that has the same timestamp as lastReadPoint
       val nextReadPoint = (lastReadPoint.get.toLong + 1).toString
@@ -380,12 +381,15 @@ class TableReader(clientConfig: ClientConfig) {
     } else {
       null
     }
+*/
 
     log.debug(s"Last read point timestamp for ${tableInfo.tableName} is $lastReadPoint")
-    log.debug(s"Next read point key for ${tableInfo.tableName} is $nextReadPointKey")
+//    log.debug(s"Next read point key for ${tableInfo.tableName} is $nextReadPointKey")
 
     // Get all the timestamp folders >= the nextReadPoint
-    val timestamplist = tableInfo.fingerprintsWithUnprocessedRecords.flatMap(fingerprint => {
+//    val timestamplist = tableInfo.fingerprintsWithUnprocessedRecords.flatMap(fingerprint => {
+    tableInfo.fingerprintsWithUnprocessedRecords.flatMap(fingerprint => {
+      val nextReadPointKey = if (lastReadPoint.isDefined) { s"${s3URI.getKey}$fingerprint/${lastReadPoint.get.toLong + 1}"} else { null }
       val listObjectsRequest = new ListObjectsRequest(s3URI.getBucket, s"${s3URI.getKey}$fingerprint/", nextReadPointKey, "/", null)
       val objectList = S3ClientSupplier.s3Client.listObjects(listObjectsRequest)
       val timestampSubfolderKeys = objectList.getCommonPrefixes
@@ -398,12 +402,13 @@ class TableReader(clientConfig: ClientConfig) {
     })
     // Marker logic in ListObjectsRequest above is not working. Filter the list to included only timestamps greater than the last read
     // to ensure we don't pull any timestamps more than once.
-    if (lastReadPoint.isDefined) {
+/*    if (lastReadPoint.isDefined) {
       timestamplist.filter(_.subfolderTimestamp > lastReadPoint.get.toLong)
     } else {
       timestamplist
-    }
+    }*/
   }
+
 
   /** Determine if TableS3LocationWithTimestampInfo objects fall in the time window from which we want to read.
    * Currently, this function uses the lastSuccessfulWriteTimestamp in the manifest entry per table.
