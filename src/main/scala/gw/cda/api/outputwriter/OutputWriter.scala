@@ -82,19 +82,6 @@ trait OutputWriter {
         }
         case other => throw new Exception(s"Unknown output file format $other")
       }
-
-/*
-      if (clientConfig.outputSettings.fileFormat.toLowerCase == "csv") {
-        log.info(s"Writing '$tableName' DataFrame as CSV to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
-        this.writeCSV(tableDataFrameWrapperForMicroBatch)
-        this.writeSchema(tableDataFrameWrapperForMicroBatch)
-        log.info(s"Wrote '$tableName' DataFrame as CSV complete, with columns ${tableDataFrameWrapperForMicroBatch.dataFrame.columns.toList}")
-      } else { //parquet
-        log.info(s"Writing '$tableName' DataFrame as PARQUET to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
-        this.writeParquet(tableDataFrameWrapperForMicroBatch)
-        log.info(s"Wrote '$tableName' DataFrame as PARQUET complete")
-      }
-*/
     }
 
     if (clientConfig.outputSettings.saveIntoJdbcRaw && clientConfig.outputSettings.saveIntoJdbcMerged) {
@@ -329,7 +316,7 @@ trait OutputWriter {
 
     // Log total rows to be merged for this fingerprint.
     val totalCount = tableDataFrameWrapperForMicroBatch.dataFrame.count()
-    log.info(s"Merged - $tableName total cnt for all ins/upd/del: ${totalCount.toString}")
+    log.info(s"Merged - $tableName total count for all ins/upd/del: ${totalCount.toString}")
 
     // Filter for records to insert and drop unwanted columns.
     val insertDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(2, 0))
@@ -338,7 +325,7 @@ trait OutputWriter {
 
     // Log total rows to be inserted for this fingerprint.
     val insertCount = insertDF.count()
-    log.info(s"Merged - $tableName insert cnt after filter: ${insertCount.toString}")
+    log.info(s"Merged - $tableName insert count after filter: ${insertCount.toString}")
 
     // Determine if we need to create the table by checking if the table already exists.
     val url = clientConfig.jdbcConnectionMerged.jdbcUrl
@@ -390,7 +377,7 @@ trait OutputWriter {
 
     // Log total rows marked as updates.
     val updateCount = updateDF.count()
-    log.info(s"Merged - $tableName update cnt after filter: ${updateCount.toString}")
+    log.info(s"Merged - $tableName update count after filter: ${updateCount.toString}")
 
     // Generate and apply update statements based on the latest transaction for each id.
     if (updateCount > 0) {
@@ -428,7 +415,7 @@ trait OutputWriter {
       val latestUpdCnt = latestChangeForEachID.count()
       if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
         // Log row count following the reduction to only last update for each id.
-        log.info(s"Merged - $tableName update cnt after agg to get latest for each id: ${latestUpdCnt.toString}")
+        log.info(s"Merged - $tableName update count after agg to get latest for each id: ${latestUpdCnt.toString}")
       } else {
         log.info(s"Merged - $tableName all updates will be applied in sequence.")
       }
@@ -457,7 +444,7 @@ trait OutputWriter {
 
     // Log number of records to be deleted.
     val deleteCount = deleteDF.count()
-    log.info(s"Merged - $tableName delete cnt after filter: ${deleteCount.toString}")
+    log.info(s"Merged - $tableName delete count after filter: ${deleteCount.toString}")
 
     // Generate and apply delete statements.
     if (deleteCount > 0) {
@@ -499,8 +486,7 @@ trait OutputWriter {
     // Build the list of columns in alphabetic order.
     schema.fields.sortBy(f => f.name).foreach { field =>
       val nullable = !notNullCols.contains(field.name) && field.nullable
-      val name = dialect.quoteIdentifier(field.name)
-      val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName, tableName, name, field.dataType, nullable)
+      val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName, tableName, field.name, field.dataType, nullable)
       allTableColumnsDefinitions.append(s"$columnDefinition, ")
     }
     // Remove the trailing comma.
@@ -543,6 +529,7 @@ trait OutputWriter {
       case "Oracle"               => "BLOB"
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
+    val fieldNameQuoted = dialect.quoteIdentifier(fieldName)
     val fieldDataTypeDefinition = if (fieldDataType == StringType) {
       // TODO Consider making the determination for the need for very large text columns configurable.
       // These are the OOTB columns we have found so far.
@@ -558,7 +545,7 @@ trait OutputWriter {
       else if (fieldDataType == BinaryType) blobDataType
       else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
     val nullableQualifier = if (!fieldNullable) "NOT NULL" else ""
-    columnDefinition.append(s"$fieldName $fieldDataTypeDefinition $nullableQualifier")
+    columnDefinition.append(s"$fieldNameQuoted $fieldDataTypeDefinition $nullableQualifier")
     columnDefinition.toString()
   }
 
@@ -762,10 +749,23 @@ trait OutputWriter {
   def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
                            user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
 
+    //Derive the product name from the url to avoid having to create or pass in a connection
+    // to access the metadata object.
+    val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
+      "Microsoft SQL Server"
+    } else if (url.toLowerCase.contains("postgresql")) {
+      "PostgreSQL"
+    } else if (url.toLowerCase.contains("oracle")) {
+      "Oracle"
+    }
+
     if (tableExists(tableName, url, user, pswd)) {
       // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
-      val sql = s"(select * from $jdbcSchemaName.$tableName where 1=2)"
-      //      val sql = jdbcSchemaName + "." + tableName
+      val sql = dbProductName match {
+        case "Microsoft SQL Server" | "PostgreSQL" => s"(select * from $jdbcSchemaName.$tableName where 1=2) as $tableName"
+        case "Oracle"                              => s"(select * from $jdbcSchemaName.$tableName where 1=2)"
+        case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
+      }
       val tableDataFrame = spark.read.format("jdbc")
         .option("url", url)
         .option("dbtable", sql)
@@ -774,21 +774,7 @@ trait OutputWriter {
         .load()
 
       val dialect = JdbcDialects.get(url)
-
-      //Derive the product name from the url to avoid having to create or pass in a connection
-      // to access the metadata object.
-      val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
-        "Microsoft SQL Server"
-      } else if (url.toLowerCase.contains("postgresql")) {
-        "PostgreSQL"
-      } else if (url.toLowerCase.contains("oracle")) {
-        "Oracle"
-      }
-
-      // Get the schema definition for the data read from the database table
       val tableSchemaDef = tableDataFrame.schema
-
-      // Get the schema definition for the data read from the parquet file.
       val fileSchemaDef = if (jdbcWriteType == JdbcWriteType.Merged) {
         val dropList = fileDataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
         fileDataFrame.drop(dropList: _*).schema
@@ -796,44 +782,33 @@ trait OutputWriter {
         fileDataFrame.schema
       }
 
-      //Determine if columns need to be added or removed from the database table based on
-      // changes to the parquet file
-      val fileMapSet = fileSchemaDef.map(rec => (rec.name, rec.dataType, rec.nullable)).toSet
-      val tableMapSet = tableSchemaDef.map(rec => (rec.name, rec.dataType, rec.nullable)).toSet
-      val newFileColumns = fileMapSet diff tableMapSet
-      //val missingFileColumns = tableMapSet diff fileMapSet
-
       val databaseConnection = DriverManager.getConnection(url, user, pswd)
       databaseConnection.setAutoCommit(false)
 
+      var newColumnAdded=false
       //ADD COLUMNS TO DATABASE TABLE THAT HAVE BEEN ADDED TO PARQUET FILE
       // Check to see if there are columns in the parquet file that are not in the database table.
       // If there are we are going to build the ALTER TABLE statement and execute the statement.
-      if (!newFileColumns.isEmpty) {
-        log.warn(s"New File Columns: ${newFileColumns.toString()}")
-        for (columnDataFrameDefinition <- newFileColumns) {
-          val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName.toString, tableName, columnDataFrameDefinition._1, columnDataFrameDefinition._2, columnDataFrameDefinition._3)
-          val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName ADD $columnDefinition"
-          log.warn(s"Statement to be executed: $alterTableStatement")
-          try {
-            // Execute the table create DDL
-            val stmt = databaseConnection.createStatement
-            stmt.execute(alterTableStatement)
-            stmt.close()
-            databaseConnection.commit()
-            log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-          } catch {
-            case e: Exception =>
-              databaseConnection.rollback()
-              databaseConnection.close()
-              log.warn(s"ALTER TABLE - ROLLBACK '$tableName' for alter table statement $alterTableStatement - $e - ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
-              throw e
-          }
-
+      fileSchemaDef.foreach(field => if(!scala.util.Try(tableDataFrame(field.name)).isSuccess) {
+        val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName.toString, tableName, field.name, field.dataType, field.nullable)
+        val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName ADD $columnDefinition"
+        log.warn(s"Statement to be executed: $alterTableStatement")
+        try {
+          // Execute the table create DDL
+          val stmt = databaseConnection.createStatement
+          stmt.execute(alterTableStatement)
+          stmt.close()
+          databaseConnection.commit()
+          newColumnAdded=true
+          log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - $url")
+        } catch {
+          case e: Exception =>
+            databaseConnection.rollback()
+            databaseConnection.close()
+            log.warn(s"ALTER TABLE - ROLLBACK '$tableName' for alter table statement $alterTableStatement - $e - $url")
+            throw e
         }
-      } else {
-        log.warn(s"NO NEW FILE COLUMNS")
-      }
+      })
 
       databaseConnection.close()
 
@@ -845,14 +820,14 @@ trait OutputWriter {
 
       //Compare the two table definitions and log warnings if they do not match.
       // Added twist here - we need to check to see if columns had to be added or removed from the database table.
-      // If we had to ADD or DROP columns from the database table, we need to rebuild the dataframe for the JDBC
+      // If we had to ADD columns to the database table we need to rebuild the dataframe for the JDBC
       // connection and check for schema consistency using the new structures that we just performed ALTER TABLE on.
       // Since we handled all of the added or removed columns, any failure at this point will be on structure changes we
       // cannot handle via code, and the DDL differences will be logged during the second call to schemasAreConsistent.
       if (databaseDDL == fileDDL) {
         true
       } else { // instead of just logging "false", we need to check to see if there were table DDL changes executed
-        if (!newFileColumns.isEmpty) {
+        if (newColumnAdded) {
           // check the schema comparison again, but now with the new table structure following ALTER statements
           val newComparison = schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
           if (newComparison) { // if its fine, just return true
