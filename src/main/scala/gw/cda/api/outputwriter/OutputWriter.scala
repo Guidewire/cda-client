@@ -26,7 +26,7 @@ case class OutputWriterConfig(outputPath: String, includeColumnNames: Boolean, s
 
 trait OutputWriter {
 
-  private val log = LogManager.getLogger
+  private[cda] val log = LogManager.getLogger
   val schemaFileName = "schema.yaml"
 
   //Instance vars that are passed in during constructor of the concrete classes
@@ -542,8 +542,19 @@ trait OutputWriter {
         case _                       => stringDataType
         }
       }
-      else if (fieldDataType == BinaryType) blobDataType
-      else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
+    else if (fieldDataType == BinaryType) blobDataType
+    else if (dbProductName == "Oracle" && fieldDataType.toString.substring(0,7)=="Decimal") {
+      fieldDataType match {
+        case t: DecimalType => {
+          if(t.scale == 0) {
+            s"NUMBER(${t.precision})"
+          } else {
+            s"DECIMAL(${t.precision},${t.scale})"
+          }
+        }
+      }
+    }
+    else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
     val nullableQualifier = if (!fieldNullable) "NOT NULL" else ""
     columnDefinition.append(s"$fieldNameQuoted $fieldDataTypeDefinition $nullableQualifier")
     columnDefinition.toString()
@@ -659,9 +670,8 @@ trait OutputWriter {
       case BinaryType     => Some(JdbcType("BLOB", java.sql.Types.BLOB))
       case TimestampType  => Some(JdbcType("TIMESTAMP", java.sql.Types.TIMESTAMP))
       case DateType       => Some(JdbcType("DATE", java.sql.Types.DATE))
-      case t: DecimalType => Some(
-        JdbcType(s"DECIMAL(${t.precision},${t.scale})", java.sql.Types.DECIMAL))
-      case _              => None
+      case t: DecimalType => Some(JdbcType(s"DECIMAL(${t.precision},${t.scale})", java.sql.Types.DECIMAL))
+       case _              => None
     }
   }
 
