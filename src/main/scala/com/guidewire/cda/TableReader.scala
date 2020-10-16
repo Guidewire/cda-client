@@ -7,7 +7,7 @@ import com.amazonaws.services.s3.AmazonS3URI
 import com.amazonaws.services.s3.model.ListObjectsRequest
 import com.guidewire.cda.ManifestReader.ManifestMap
 import com.guidewire.cda.config.ClientConfig
-import gw.cda.api.outputwriter.OutputWriter
+import gw.cda.api.outputwriter._
 import gw.cda.api.outputwriter.OutputWriterConfig
 import gw.cda.api.utils.S3ClientSupplier
 import org.apache.commons.lang.time.StopWatch
@@ -106,9 +106,9 @@ class TableReader(clientConfig: ClientConfig) {
                        |Source bucket: ${clientConfig.sourceLocation.bucketName}
                        |Manifest has ${manifestMap.size} tables: ${manifestMap.keys.mkString(", ")}
                        |Writing tables to $outputPath
-                       |Save into JDBC: ${clientConfig.outputSettings.saveIntoJdbcRaw}
-                       |Save into JDBC: ${clientConfig.outputSettings.saveIntoJdbcMerged}
-                       |Save into File: ${clientConfig.outputSettings.saveIntoFile}
+                       |Save into JDBC Raw: ${clientConfig.outputSettings.saveIntoJdbcRaw}
+                       |Save into JDBC Merged: ${clientConfig.outputSettings.saveIntoJdbcMerged}
+                       |Export Target: ${clientConfig.outputSettings.exportTarget}
                        |File Format: ${clientConfig.outputSettings.fileFormat}
                        |Save as single file: $saveAsSingleFile
                        |Save files into timestamp sub directory: $saveIntoTimestampDirectory
@@ -188,7 +188,6 @@ class TableReader(clientConfig: ClientConfig) {
             try {
               log.info(s"Copy Job is starting for '$tableName' for fingerprint '$schemaFingerprint'")
               copyTableFingerprintPairJob(tableName, schemaFingerprint, copyJobs.get((tableName, schemaFingerprint)), useManifestMap, savepointsProcessor, outputWriter)
-              log.info(s"copyJobs ${copyJobs.get((tableName, schemaFingerprint)).toString}")
               completed = true
             }
             catch {
@@ -238,7 +237,7 @@ class TableReader(clientConfig: ClientConfig) {
                                       tableName: String,
                                       savepointsProcessor: SavepointsProcessor,
                                       baseUri: AmazonS3URI): Iterable[String] = {
-    if (clientConfig.outputSettings.saveIntoJdbcRaw || clientConfig.outputSettings.saveIntoJdbcMerged) {
+    if (clientConfig.outputSettings.exportTarget=="jdbc") {
       // Need to allow multiple fingerprints now that we're dynamically altering table definitions
       // HOWEVER we can't handle fingerprints in parallel for a given table since we're executing
       // ALTER TABLE statements against the tables as the parquet file schemas change
@@ -320,17 +319,17 @@ class TableReader(clientConfig: ClientConfig) {
         val fullReduceTime = tableStopwatch.getTime - startReduceTime
         log.info(s"Reduce DataFrames for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullReduceTime / 1000.0).toString} seconds")
 
-        // Since all output types (CSV, Parquet, JdbcRaw, JdbcMerged) share a common savepoints.json,
+        // Since all output types share a common savepoints.json,
         // make sure there are no schema change issues for JdbcRaw or JdbcMerged before writing data for
         // this fingerprint to any of the target types.
-        val jdbcRawIsOk = if (clientConfig.outputSettings.saveIntoJdbcRaw) {
+        val jdbcRawIsOk = if (clientConfig.outputSettings.exportTarget=="jdbc" && clientConfig.outputSettings.saveIntoJdbcRaw) {
           outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
             clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, outputWriter.JdbcWriteType.Raw)
         } else {
           true
         }
 
-        val jdbcMergedIsOk = if (clientConfig.outputSettings.saveIntoJdbcMerged) {
+        val jdbcMergedIsOk = if (clientConfig.outputSettings.exportTarget=="jdbc" && clientConfig.outputSettings.saveIntoJdbcMerged) {
           outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionMerged.jdbcSchema, tableName, schemaFingerprint,
             clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword, spark, outputWriter.JdbcWriteType.Merged)
         } else {
@@ -359,7 +358,7 @@ class TableReader(clientConfig: ClientConfig) {
 
           // Log a warning message listing any additional fingerprints for this table
           // that are not being processed.
-          if (fingerprintsAfterCurrent.size > 0) {
+          if (clientConfig.outputSettings.exportTarget=="jdbc" && fingerprintsAfterCurrent.size > 0) {
             val bypassedFingerprintsList = fingerprintsAfterCurrent
               .map({ case (schemaFingerprint, _) => schemaFingerprint })
             log.warn(
@@ -368,13 +367,12 @@ class TableReader(clientConfig: ClientConfig) {
                  |   Only one fingerprint per table can be processed at a time.""")
           }
 
-          // If loading to jdbc target, only one Fingerprint will be processed at a time,
-          // even if also loading files.
-          // If ONLY loading files (CSV, Parquet), all Fingerprints are loaded.
+          // If loading to jdbc target, only one Fingerprint will be processed at a time.
+          // If loading files (CSV, Parquet), all Fingerprints are loaded.
           // Savepoints logic will be different for those scenarios.
           //    * If loading jdbc, use the last timestamp folder actually written.
-          //    * If loading ONLY files, use the lastSuccessfulWriteTimestamp for that table from manifest.json.
-          if(clientConfig.outputSettings.saveIntoJdbcMerged || clientConfig.outputSettings.saveIntoJdbcRaw) {
+          //    * If loading files, use the lastSuccessfulWriteTimestamp for that table from manifest.json.
+          if(clientConfig.outputSettings.exportTarget=="jdbc") {
             savepointsProcessor.writeSavepoints(tableName, maxTimestamp.toString)
           } else {
             savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
@@ -552,13 +550,6 @@ class TableReader(clientConfig: ClientConfig) {
       .filter({ case (_, schemaEndTimestamp) => schemaEndTimestamp > lastProcessedTimestamp })
       .map({ case (fingerprint, _) => fingerprint })
       .toSeq
-  }
-
-
-  private[cda] def getNextTimestampFolderForFingerprint(lastProcessedTimestamp: Long, fingerprint: String): Long = {
-    val x = lastProcessedTimestamp
-    val y = fingerprint
-    -1
   }
 
 }

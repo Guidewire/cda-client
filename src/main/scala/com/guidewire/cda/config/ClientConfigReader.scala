@@ -20,7 +20,7 @@ private[cda] case class SavepointsLocation(path: String)
 private[cda] case class OutputSettings(tablesToInclude: String,
                                        saveIntoJdbcRaw: Boolean,
                                        saveIntoJdbcMerged: Boolean,
-                                       saveIntoFile: Boolean,
+                                       exportTarget: String,
                                        fileFormat: String,
                                        includeColumnNames: Boolean,
                                        saveAsSingleFile: Boolean,
@@ -158,14 +158,32 @@ object ClientConfigReader {
 
     //All boolean parameters will get a default value of false if they are not in the config.yaml file
 
+    //Export options must be either file or jdbc
+    val validExportOptions = List("file", "jdbc")
+    try {
+      require(validExportOptions.contains(clientConfig.outputSettings.exportTarget.toLowerCase()),
+        "outputSettings.exportTarget is is not valid.  Valid options are 'file' or 'jdbc'.")
+    } catch {
+      case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
+    }
+
     //If saving to file then file format must be either csv or parquet.
-    if (clientConfig.outputSettings.saveIntoFile) {
-      val validOptions = List("csv", "parquet")
+    if (clientConfig.outputSettings.exportTarget=="file") {
+      val validFileOptions = List("csv", "parquet")
       try {
-        require(validOptions.contains(clientConfig.outputSettings.fileFormat.toLowerCase()),
+        require(validFileOptions.contains(clientConfig.outputSettings.fileFormat.toLowerCase()),
           "outputSettings.fileFormat is is not valid.  Valid options are 'csv' or 'parquet'.")
       } catch {
         case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
+      }
+    }
+
+    if (clientConfig.outputSettings.exportTarget=="jdbc") {
+      try {
+        require(clientConfig.outputSettings.saveIntoJdbcMerged || clientConfig.outputSettings.saveIntoJdbcRaw,
+          "If selecting 'jdbc' exportTarget, either saveIntoJdbcMerged or saveIntoJdbcRaw must be set to true")
+      } catch {
+        case e: IllegalArgumentException => throw MissingConfigParameterException("Config parameter is invalid in the config file", e)
       }
     }
   }

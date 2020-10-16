@@ -78,7 +78,7 @@ outputSettings:
   tablesToInclude: ...
   saveIntoJdbcRaw: ...
   saveIntoJdbcMerged: ...
-  saveIntoFile: ...
+  exportTarget: ...
   fileFormat: ...
   includeColumnNames: ...
   saveAsSingleFile: ...
@@ -118,10 +118,10 @@ Under "*outputLocation*":
 
 *outputSettings*:
 
-* "*tablesToInclude*" is a comma delimited list of tables to include. leave blank or omit to include all tables in the output. 
+* "*tablesToInclude*" (should be blank by default) is a comma delimited list of tables to include. Leave blank or omit to include all tables in the output.  This is for testing or troubleshooting purposes only. In a Production environment there should be no values here. It is for loading one or more tables to test connectivity, reviewing individual tables in a testing scenario.
 * "*saveIntoJdbcRaw*" boolean (defaults to false) - should be "true" to write data to a database in Raw format (all activities and operations included in the output). 
 * "*saveIntoJdbcMerged*" boolean (defaults to false) - should be "true" to write data to a database in Merged format (more closely representing the source system data). 
-* "*saveIntoFile*" boolean (defaults to true) - should be "true" to write data to file formats, either .csv or .parquet depending on fileFormat setting. 
+* "*exportTarget*" (defaults to file) - available export targets are file and jdbc.
 * "*fileFormat*" (defaults to csv) - available output formats are .csv and .parquet. 
 * "*includeColumnNames*" boolean (defaults to false) - should be "true" to include a row of column names at the top of the csv file for each table, and "false" for no header row.
 * "*saveAsSingleFile*" boolean (defaults to false) - should be "true" for writing out a single file (.csv or .parquet) per table, and "false" to have multiple/smaller files be written based on SPARK partitioning.
@@ -247,10 +247,9 @@ Database permissions for the account running the application must include:
 - - -
 ## RDBMS - Table changes
 
-Limited table changes are supported in this iteration. If a parquet file structure changes - i.e. - columns are added ~~or removed~~ in the underlying source system for that table - the application will currently add any new columns ~~and remove any columns~~ that are no longer part of thw parquet file schema. 
+Limited table changes are supported in this iteration. If a parquet file structure changes - i.e. - columns have been added in the underlying source system for that table - the application will add any new columns to the existing table via ALTER TABLE statements. 
 
-To accomplish this, the ability to run in parallel for fingerprint folders for any given table was turned off. Currently, if there are multiple fingerprint folders in a given load for a given table, only the earliest fingerprint folder will be processed during that run. Additional fingerprint folders will be picked up in subsequent loads. 
-The next step in the development of this capability is to sequence the fingerprint folders by their timestamp in Schema History and process them in the order they arrived. Tables should be able to be processed in parallel, but a table with multiple fingerprints will need to serialize the processesing of each fingerprint folder. 
+To accomplish this, the ability to run in parallel for fingerprint folders for any given table has been turned off. If there are multiple fingerprint folders in a given load for a given table, only the earliest fingerprint folder will be processed during that run. Additional fingerprint folders will be picked up in subsequent loads. 
 
 - - -
 ## Windows Requirements
@@ -314,7 +313,7 @@ After writing is completed, the contents of cda_client_output looks like so:
 
 ![Sample Output](./images/cda_client_sample_output.png)
 
-Where in each folder corresponding to a table, the .csv file contains the table data and the schema.yaml contains information about the columns, namely the name, dataType, and nullable boolean for each column.
+Where in each folder corresponding to a table, the .csv file contains the table data, and the schema.yaml contains information about the columns, namely the name, dataType, and nullable boolean for each column.
 
-When rerunning the utility, the client will resume from the savepoints written in the savepoints.json file. The existing .csv file is deleted and a new .csv file is written in its place containing the new data.
+When rerunning the utility, the client will resume from the savepoints written in the savepoints.json file. The existing .csv file is deleted, and a new .csv file will be written in its place containing the new data.
 
