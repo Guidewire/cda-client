@@ -59,6 +59,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     val fullPathToSchema = s"$basePathToFolder/$schemaFileName"
     fullPathToSchema
   }
+
   override def writeSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
     val tableDF = tableDataFrameWrapperForMicroBatch.dataFrame
     val yamlString = makeSchemaYamlString(tableDF)

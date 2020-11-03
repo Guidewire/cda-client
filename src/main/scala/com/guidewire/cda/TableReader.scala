@@ -422,8 +422,11 @@ class TableReader(clientConfig: ClientConfig) {
     tableInfo.fingerprintsWithUnprocessedRecords.flatMap(fingerprint => {
       val nextReadPointKey = if (lastReadPoint.isDefined) { s"${s3URI.getKey}$fingerprint/${lastReadPoint.get.toLong + 1}"} else { null }
       val listObjectsRequest = new ListObjectsRequest(s3URI.getBucket, s"${s3URI.getKey}$fingerprint/", nextReadPointKey, "/", null)
-      val objectList = S3ClientSupplier.s3Client.listObjects(listObjectsRequest)
-      val timestampSubfolderKeys = objectList.getCommonPrefixes
+      var objectLists = List(S3ClientSupplier.s3Client.listObjects(listObjectsRequest))
+      while (objectLists.last.isTruncated) {
+        objectLists = objectLists :+ S3ClientSupplier.s3Client.listNextBatchOfObjects(objectLists.last)
+      }
+      val timestampSubfolderKeys = objectLists.flatMap(_.getCommonPrefixes)
       timestampSubfolderKeys.map(timestampSubfolderKey => {
         val timestampSubfolderURI = new AmazonS3URI(s"s3://${s3URI.getBucket}/$timestampSubfolderKey")
         val timestampPattern = ".+\\/([0-9]+)\\/$".r
