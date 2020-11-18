@@ -34,8 +34,8 @@ class ClientConfigReaderTest extends CDAClientTestSpec {
         clientConfig.outputSettings.includeColumnNames shouldEqual true
       }
 
-      it("config should have value for saveAsSingleFileCSV") {
-        clientConfig.outputSettings.saveAsSingleFileCSV shouldEqual true
+      it("config should have value for saveAsSingleFile") {
+        clientConfig.outputSettings.saveAsSingleFile shouldEqual true
       }
 
       it("config should have value for saveIntoTimestampDirectory") {

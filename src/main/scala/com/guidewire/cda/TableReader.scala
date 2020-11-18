@@ -7,7 +7,7 @@ import com.amazonaws.services.s3.AmazonS3URI
 import com.amazonaws.services.s3.model.ListObjectsRequest
 import com.guidewire.cda.ManifestReader.ManifestMap
 import com.guidewire.cda.config.ClientConfig
-import gw.cda.api.outputwriter.OutputWriter
+import gw.cda.api.outputwriter._
 import gw.cda.api.outputwriter.OutputWriterConfig
 import gw.cda.api.utils.S3ClientSupplier
 import org.apache.commons.lang.time.StopWatch
@@ -39,11 +39,13 @@ private[cda] case class DataFrameWrapper(tableName: String,
 
 case class DataFrameWrapperForMicroBatch(tableName: String,
                                          schemaFingerprint: String,
+                                         schemaFingerprintTimestamp: String,
                                          manifestTimestamp: String,
                                          dataFrame: DataFrame)
 
-class TableReader(clientConfig: ClientConfig) {
 
+
+class TableReader(clientConfig: ClientConfig) {
   private val log = LogManager.getLogger
 
   private[cda] val relevantInternalColumns = Set("gwcbi___seqval_hex", "gwcbi___operation")
@@ -74,7 +76,7 @@ class TableReader(clientConfig: ClientConfig) {
   sc.hadoopConfiguration.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
   sc.setLogLevel("ERROR")
 
-  def run(): Unit = {
+  def run(singleTableName: String = ""): Unit = {
 
     //Measure the total time
     val completeRunForAllTablesStopWatch = new StopWatch()
@@ -87,9 +89,9 @@ class TableReader(clientConfig: ClientConfig) {
       // Create OutputWriter and validate it
       val outputPath = clientConfig.outputLocation.path
       val includeColumnNames = clientConfig.outputSettings.includeColumnNames
-      val saveAsSingleFileCSV = clientConfig.outputSettings.saveAsSingleFileCSV
+      val saveAsSingleFile = clientConfig.outputSettings.saveAsSingleFile
       val saveIntoTimestampDirectory = clientConfig.outputSettings.saveIntoTimestampDirectory
-      val outputWriterConfig = OutputWriterConfig(outputPath, includeColumnNames, saveAsSingleFileCSV, saveIntoTimestampDirectory)
+      val outputWriterConfig = OutputWriterConfig(outputPath, includeColumnNames, saveAsSingleFile, saveIntoTimestampDirectory, clientConfig)
       val outputWriter = OutputWriter(outputWriterConfig)
       outputWriter.validate()
 
@@ -97,16 +99,43 @@ class TableReader(clientConfig: ClientConfig) {
       val bucketName = clientConfig.sourceLocation.bucketName
       val manifestKey = clientConfig.sourceLocation.manifestKey
       val manifestMap: ManifestMap = ManifestReader.processManifest(bucketName, manifestKey)
+      var useManifestMap = manifestMap
 
-      log.info(
-        s"""Starting Cloud Data Access Client:
-           |Source bucket: ${clientConfig.sourceLocation.bucketName}
-           |Manifest has ${manifestMap.size} tables: ${manifestMap.keys.mkString(", ")}
-           |Writing tables to $outputPath
-           |Save as single CSV file: $saveAsSingleFileCSV
-           |Save files into timestamp sub directory: $saveIntoTimestampDirectory
-           |Including column names in csv output: $includeColumnNames""".stripMargin
-      )
+      // Prepare user configs log msg
+      var logMsg = (s"""Starting Cloud Data Access Client:
+                       |Source bucket: ${clientConfig.sourceLocation.bucketName}
+                       |Manifest has ${manifestMap.size} tables: ${manifestMap.keys.mkString(", ")}
+                       |Writing tables to $outputPath
+                       |Save into JDBC Raw: ${clientConfig.outputSettings.saveIntoJdbcRaw}
+                       |Save into JDBC Merged: ${clientConfig.outputSettings.saveIntoJdbcMerged}
+                       |Export Target: ${clientConfig.outputSettings.exportTarget}
+                       |File Format: ${clientConfig.outputSettings.fileFormat}
+                       |Save as single file: $saveAsSingleFile
+                       |Save files into timestamp sub directory: $saveIntoTimestampDirectory
+                       |Including column names in csv output: $includeColumnNames
+                       |jdbcConnectionRaw.jdbcUrl: ${clientConfig.jdbcConnectionRaw.jdbcUrl}
+                       |jdbcConnectionRaw.jdbcSchema: ${clientConfig.jdbcConnectionRaw.jdbcSchema}
+                       |jdbcConnectionRaw.jdbcSaveMode: ${clientConfig.jdbcConnectionRaw.jdbcSaveMode}
+                       |jdbcConnectionMerged.jdbcUrl: ${clientConfig.jdbcConnectionMerged.jdbcUrl}
+                       |jdbcConnectionMerged.jdbcSchema: ${clientConfig.jdbcConnectionMerged.jdbcSchema}""".stripMargin)
+
+      // Filter the manifestMap if this is run for specific tables.
+      var tablesToInclude: String = Option(clientConfig.outputSettings.tablesToInclude).getOrElse("")
+      //If command line argument is present, use it instead of yaml value.
+      if (!singleTableName.isEmpty) {
+        tablesToInclude = singleTableName
+      }
+
+      if (!tablesToInclude.isEmpty) {
+        tablesToInclude = tablesToInclude.replace(" ", "")
+        val tablesList = tablesToInclude.split(",")
+        logMsg = logMsg + (s"""
+                              |Including ONLY ${tablesList.size} table(s): $tablesToInclude""".stripMargin)
+        useManifestMap = manifestMap.filterKeys(tablesList.contains)
+      }
+
+      // Log user configs info we prepared above
+      log.info(logMsg)
 
       // Print out the common ForkJoinPool, so we are sure our job/table specific ForkJoinPool is different (we dont want to mess with the common pool)
       (1 to 1).par.foreach(_ => {
@@ -118,11 +147,14 @@ class TableReader(clientConfig: ClientConfig) {
       // Iterate over the manifestMap, and process each table
       log.info("Calculating all the files to fetch, based on the manifest timestamps; this might take a few seconds...")
 
-      val copyJobs = manifestMap
+      val copyJobs = useManifestMap
         .map({ case (tableName, manifestEntry) =>
           // For each entry in the manifestMap, map the table name to s3 url
           val baseUri = getTableS3BaseLocationFromManifestEntry(tableName, manifestEntry)
-          val fingerprintsWithUnprocessedRecords = getFingerprintsWithUnprocessedRecords(tableName, manifestEntry, savepointsProcessor)
+          val tmpFingerprintsWithUnprocessedRecords = getFingerprintsWithUnprocessedRecords(tableName, manifestEntry, savepointsProcessor)
+          val fingerprintsWithUnprocessedRecords: Iterable[String] = {
+            getFingerprintToProcess(clientConfig, tmpFingerprintsWithUnprocessedRecords, tableName, savepointsProcessor, baseUri)
+          }
           TableS3BaseLocationWithFingerprintsWithUnprocessedRecords(tableName, baseUri, fingerprintsWithUnprocessedRecords)
         })
         // Map each table s3 url to all corresponding timestamp subfolder urls (with new data to copy)
@@ -131,7 +163,6 @@ class TableReader(clientConfig: ClientConfig) {
         .filter(isTableS3LocationWithTimestampSafeToCopy(_, manifestMap))
         // Put all the timestampSubfolderLocations in a map by (table name, schema fingerprint)
         .groupBy(tableInfo => (tableInfo.tableName, tableInfo.schemaFingerprint))
-
 
       // Iterate over the manifestMap, and process each table
       log.info("Starting to fetch and process all tables in the manifest")
@@ -152,12 +183,22 @@ class TableReader(clientConfig: ClientConfig) {
         // Define the job to run, using a closure
         val runnableJob = new Runnable {
           override def run(): Unit = {
+            var completed = false
+
             try {
               log.info(s"Copy Job is starting for '$tableName' for fingerprint '$schemaFingerprint'")
-              copyTableFingerprintPairJob(tableName, schemaFingerprint, copyJobs.get((tableName, schemaFingerprint)), manifestMap, savepointsProcessor, outputWriter)
+              copyTableFingerprintPairJob(tableName, schemaFingerprint, copyJobs.get((tableName, schemaFingerprint)), useManifestMap, savepointsProcessor, outputWriter)
+              completed = true
+            }
+            catch {
+              case e: Throwable =>
+                log.warn(s"Copy Job FAILED for '$tableName' for fingerprint '$schemaFingerprint': $e")
+              //log.warn(e)
             }
             finally {
-              log.info(s"Copy Job is complete for '$tableName' for fingerprint '$schemaFingerprint'; completed: ${completedNumberOfTableFingerprintPairs.incrementAndGet()} of $totalNumberOfTableFingerprintPairs tables")
+              if (completed) {
+                log.info(s"Copy Job is complete for '$tableName' for fingerprint '$schemaFingerprint'; completed: ${completedNumberOfTableFingerprintPairs.incrementAndGet()} of $totalNumberOfTableFingerprintPairs tables")
+              }
               semaphore.release()
             }
           }
@@ -182,6 +223,49 @@ class TableReader(clientConfig: ClientConfig) {
   }
 
   /**
+   * Fetch the proper Fingerprint to processed based on available timestamp folders for JDBC writes.
+   * Returns all available Fingerprints for file-only writes.
+   *
+   * @param clientConfig            clientConfig object.
+   * @param fingerprintsAvailable   List of Fingerprints with unprocessed records.
+   * @param tableName               tableName evaluated.
+   * @param savepointsProcessor     Savepoints processor.
+   * @param baseUri                 Amazon S3 URI.
+   */
+  private def getFingerprintToProcess(clientConfig: ClientConfig,
+                                      fingerprintsAvailable: Iterable[String],
+                                      tableName: String,
+                                      savepointsProcessor: SavepointsProcessor,
+                                      baseUri: AmazonS3URI): Iterable[String] = {
+    if (clientConfig.outputSettings.exportTarget=="jdbc") {
+      // Need to allow multiple fingerprints now that we're dynamically altering table definitions
+      // HOWEVER we can't handle fingerprints in parallel for a given table since we're executing
+      // ALTER TABLE statements against the tables as the parquet file schemas change
+      // When saving to JDBC, we want to be sure we only return one fingerprint in each load to avoid schema conflict.
+      val lastReadPoint = savepointsProcessor.getSavepoint(tableName)
+      val numberOfFingerprintsAvailable = fingerprintsAvailable.toSeq.length
+      if(numberOfFingerprintsAvailable==1) {
+        fingerprintsAvailable
+      } else {
+        var fingerprintToReturn: Iterable[String] = None: Iterable[String]
+        val firstFingerprintInList = fingerprintsAvailable.toSeq.get(0)
+        val nextReadPointKey = if (lastReadPoint.isDefined) { s"${baseUri.getKey}$firstFingerprintInList/${lastReadPoint.get.toLong + 1}"} else { null }
+        val listObjectsRequest = new ListObjectsRequest(baseUri.getBucket, s"${baseUri.getKey}$firstFingerprintInList/", nextReadPointKey, "/", null)
+        val objectList = S3ClientSupplier.s3Client.listObjects(listObjectsRequest)
+        val numberOfTimestampFoldersRemaining = objectList.getCommonPrefixes.size()
+        if(numberOfTimestampFoldersRemaining>0) {
+          fingerprintToReturn=fingerprintsAvailable.iterator.toIterable.filter(_==firstFingerprintInList)
+        } else {
+          val secondFingerprintInList = fingerprintsAvailable.toSeq.get(1)
+          fingerprintToReturn=fingerprintsAvailable.iterator.toIterable.filter(_==secondFingerprintInList)
+        }
+        fingerprintToReturn
+      }
+    } else {
+      fingerprintsAvailable
+    }
+  }
+  /**
    * Fetch a table-fingerprint pair from S3 and write it.
    *
    * @param tableName                   Name of the table.
@@ -198,6 +282,17 @@ class TableReader(clientConfig: ClientConfig) {
 
     log.info(s"Processing '$tableName' with fingerprint '$schemaFingerprint', looking for new data, on thread ${Thread.currentThread()}")
 
+    // Get the last timestamp in the fingerprint.  We will need this when we update savepoints later on.
+    val maxTimestamp = if (timestampSubfolderLocations.isDefined) {
+      timestampSubfolderLocations
+        .get
+        .maxBy(_.subfolderTimestamp)
+        .subfolderTimestamp
+    } else {
+      0
+    }
+
+    log.info(s"maxTimestamp for fingerprint '$schemaFingerprint' = $maxTimestamp")
     // Read all timestamp subfolder urls, for this table, into DataFrames using Spark
     timestampSubfolderLocations
       .map(timestampSubfolderLocationsForTable => {
@@ -224,17 +319,65 @@ class TableReader(clientConfig: ClientConfig) {
         val fullReduceTime = tableStopwatch.getTime - startReduceTime
         log.info(s"Reduce DataFrames for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullReduceTime / 1000.0).toString} seconds")
 
-        // Write each table and its schema to a CSV file to the configured location
-        val startWriteTime = tableStopwatch.getTime
-        val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
-        val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint,
-          manifestTimestampForTable, dataFrameForTable)
-        outputWriter.write(tableDataFrameWrapperForMicroBatch)
-        val fullWriteTime = tableStopwatch.getTime - startWriteTime
-        log.info(s"Wrote file(s) for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullWriteTime / 1000.0).toString} seconds")
+        // Since all output types share a common savepoints.json,
+        // make sure there are no schema change issues for JdbcRaw or JdbcMerged before writing data for
+        // this fingerprint to any of the target types.
+        val jdbcRawIsOk = if (clientConfig.outputSettings.exportTarget=="jdbc" && clientConfig.outputSettings.saveIntoJdbcRaw) {
+          outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
+            clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword, spark, outputWriter.JdbcWriteType.Raw)
+        } else {
+          true
+        }
 
-        // Savepoints update with the manifest timestamp, since that is the data we copied
-        savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
+        val jdbcMergedIsOk = if (clientConfig.outputSettings.exportTarget=="jdbc" && clientConfig.outputSettings.saveIntoJdbcMerged) {
+          outputWriter.schemasAreConsistent(dataFrameForTable, clientConfig.jdbcConnectionMerged.jdbcSchema, tableName, schemaFingerprint,
+            clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword, spark, outputWriter.JdbcWriteType.Merged)
+        } else {
+          true
+        }
+
+        if (jdbcRawIsOk && jdbcMergedIsOk) {
+
+          // Write each table and its schema to the configured output type(s) (CSV, Parquet, JDBC) to the configured location
+          val startWriteTime = tableStopwatch.getTime
+          val manifestTimestampForTable = manifestMap(tableName).lastSuccessfulWriteTimestamp
+          val schemaFingerprintTimestamp = manifestMap(tableName).schemaHistory.getOrElse(schemaFingerprint, "unknown")
+          val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(tableName, schemaFingerprint, schemaFingerprintTimestamp,
+            manifestTimestampForTable, dataFrameForTable)
+          outputWriter.write(tableDataFrameWrapperForMicroBatch)
+          val fullWriteTime = tableStopwatch.getTime - startWriteTime
+          log.info(s"Wrote data for table '$tableName' for fingerprint '$schemaFingerprint', took ${(fullWriteTime / 1000.0).toString} seconds")
+
+          // Get a list of all fingerprints that follow the one we are processing.
+          val manifestEntry = manifestMap(tableName)
+          val fingerprintsAfterCurrent = manifestEntry.schemaHistory
+            .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
+            .filter({ case (_, timestamp) => timestamp > schemaFingerprintTimestamp.toLong })
+            .toList
+            .sortBy({ case (_, timestamp) => timestamp })
+
+          // Log a warning message listing any additional fingerprints for this table
+          // that are not being processed.
+          if (clientConfig.outputSettings.exportTarget=="jdbc" && fingerprintsAfterCurrent.size > 0) {
+            val bypassedFingerprintsList = fingerprintsAfterCurrent
+              .map({ case (schemaFingerprint, _) => schemaFingerprint })
+            log.warn(
+              s"""
+                 | $tableName fingerprint(s) were not processed in this load: ${bypassedFingerprintsList.toString.stripPrefix("List(").stripSuffix(")")}
+                 |   Only one fingerprint per table can be processed at a time.""")
+          }
+
+          // If loading to jdbc target, only one Fingerprint will be processed at a time.
+          // If loading files (CSV, Parquet), all Fingerprints are loaded.
+          // Savepoints logic will be different for those scenarios.
+          //    * If loading jdbc, use the last timestamp folder actually written.
+          //    * If loading files, use the lastSuccessfulWriteTimestamp for that table from manifest.json.
+          if(clientConfig.outputSettings.exportTarget=="jdbc") {
+            savepointsProcessor.writeSavepoints(tableName, maxTimestamp.toString)
+          } else {
+            savepointsProcessor.writeSavepoints(tableName, manifestTimestampForTable)
+          }
+        }
 
         //Cleanup the forkJoinPool, to avoid a memory leak
         log.info(s"The forkJoinPool for table '$tableName' for fingerprint '$schemaFingerprint' is cleaning up = $forkJoinPool")
@@ -242,9 +385,9 @@ class TableReader(clientConfig: ClientConfig) {
 
         //Stop the StopWatch, and print out the results
         tableStopwatch.stop()
-        log.info(s"Processed part of '$tableName' with fingerprint '$schemaFingerprint', took ${(tableStopwatch.getTime / 1000.0).toString} seconds")
+        log.info(s"Processed '$tableName' for fingerprint '$schemaFingerprint', took ${(tableStopwatch.getTime / 1000.0).toString} seconds")
       })
-      .getOrElse(log.info(s"Skipping part of '$tableName' with fingerprint '$schemaFingerprint' , no new data found"))
+      .getOrElse(log.info(s"Skipping '$tableName' for fingerprint '$schemaFingerprint', no new data found"))
   }
 
   /**
@@ -275,24 +418,15 @@ class TableReader(clientConfig: ClientConfig) {
   private[cda] def getTableS3LocationWithTimestampsAfterLastSave(tableInfo: TableS3BaseLocationWithFingerprintsWithUnprocessedRecords, savepointsProcessor: SavepointsProcessor): Iterable[TableS3LocationWithTimestampInfo] = {
     val s3URI = tableInfo.baseURI
     val lastReadPoint = savepointsProcessor.getSavepoint(tableInfo.tableName)
-
-    // determine the next read point, based on the last save point
-    val nextReadPointKey = if (lastReadPoint.isDefined) {
-      // must be incremented to avoid re-reading last folder that has the same timestamp as lastReadPoint
-      val nextReadPoint = (lastReadPoint.get.toLong + 1).toString
-      s"${s3URI.getKey}$nextReadPoint"
-    } else {
-      null
-    }
-
     log.debug(s"Last read point timestamp for ${tableInfo.tableName} is $lastReadPoint")
-    log.debug(s"Next read point key for ${tableInfo.tableName} is $nextReadPointKey")
-
-    // Get all the timestamp folders >= the nextReadPoint
     tableInfo.fingerprintsWithUnprocessedRecords.flatMap(fingerprint => {
+      val nextReadPointKey = if (lastReadPoint.isDefined) { s"${s3URI.getKey}$fingerprint/${lastReadPoint.get.toLong + 1}"} else { null }
       val listObjectsRequest = new ListObjectsRequest(s3URI.getBucket, s"${s3URI.getKey}$fingerprint/", nextReadPointKey, "/", null)
-      val objectList = S3ClientSupplier.s3Client.listObjects(listObjectsRequest)
-      val timestampSubfolderKeys = objectList.getCommonPrefixes
+      var objectLists = List(S3ClientSupplier.s3Client.listObjects(listObjectsRequest))
+      while (objectLists.last.isTruncated) {
+        objectLists = objectLists :+ S3ClientSupplier.s3Client.listNextBatchOfObjects(objectLists.last)
+      }
+      val timestampSubfolderKeys = objectLists.flatMap(_.getCommonPrefixes)
       timestampSubfolderKeys.map(timestampSubfolderKey => {
         val timestampSubfolderURI = new AmazonS3URI(s"s3://${s3URI.getBucket}/$timestampSubfolderKey")
         val timestampPattern = ".+\\/([0-9]+)\\/$".r
@@ -332,7 +466,11 @@ class TableReader(clientConfig: ClientConfig) {
     val s3URI = tableTimestampSubfolderInfo.timestampSubfolderURI
     val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}*"
     log.info(s"Reading '${tableTimestampSubfolderInfo.tableName}' from $s3aURL, on thread ${Thread.currentThread()}")
+    // Adding in column renaming capabilities - we ran across the column name "interval", and cannot get the jdbc driver to stop creating the column with
+    //   double quotes around it in the table definition. When we execute the Merged code, it thinks the value is a literal and won't insert.
+    //   Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
     val dataFrame = spark.sqlContext.read.parquet(s3aURL)
+      .withColumnRenamed("interval", "interval_")
     val dataFrameNoInternalColumns = dropIrrelevantInternalColumns(dataFrame)
     DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint,
       dataFrameNoInternalColumns)
@@ -346,8 +484,13 @@ class TableReader(clientConfig: ClientConfig) {
    * @return DataFrame that is the same as input, but has irrelevant internal columns removed
    */
   private[cda] def dropIrrelevantInternalColumns(dataFrame: DataFrame): DataFrame = {
-    val dropList = dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___") && !relevantInternalColumns.contains(colName))
+    val dropList = dataFrame.columns.filter(colName => (colName.toLowerCase.startsWith("gwcbi___") && !relevantInternalColumns.contains(colName))
+      // Get rid of geospatial columns.
+      || colName.toLowerCase.contains("spatial")
+      // Get rid of textdata columns. Contains XML data that won't insert into the database properly.
+      || colName.toLowerCase.equals("textdata"))
     dataFrame.drop(dropList: _*)
+
   }
 
   /** Function that takes two DataFrameWrapper objects that correspond to the same table and returns a
@@ -384,18 +527,20 @@ class TableReader(clientConfig: ClientConfig) {
   /**
    * Get fingerprints with records not yet processed.
    *
-   * @param tableName Table to fetch fingerprints for.
-   * @param manifestEntry Manifest entry corresponding to the table.
+   * @param tableName           Table to fetch fingerprints for.
+   * @param manifestEntry       Manifest entry corresponding to the table.
    * @param savepointsProcessor Savepoint data processor.
    * @return Fingerprints for the table with records not yet processed.
    */
   private[cda] def getFingerprintsWithUnprocessedRecords(tableName: String, manifestEntry: ManifestEntry,
-                                                    savepointsProcessor: SavepointsProcessor): Iterable[String] = {
+                                                         savepointsProcessor: SavepointsProcessor): Iterable[String] = {
     val lastProcessedTimestamp: Long = savepointsProcessor.getSavepoint(tableName).map(_.toLong).getOrElse(-1)
     val fingerprintsSortedByTimestamp = manifestEntry.schemaHistory
       .map({ case (schemaFingerprint, timestamp) => (schemaFingerprint, timestamp.toLong) })
       .toList
       .sortBy({ case (_, timestamp) => timestamp })
+
+
     val endOfTimeline = (fingerprintsSortedByTimestamp.last._1, Long.MaxValue)
     (fingerprintsSortedByTimestamp :+ endOfTimeline)
       .sliding(2)
@@ -409,4 +554,5 @@ class TableReader(clientConfig: ClientConfig) {
       .map({ case (fingerprint, _) => fingerprint })
       .toSeq
   }
+
 }

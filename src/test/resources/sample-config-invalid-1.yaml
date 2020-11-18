@@ -6,6 +6,10 @@ outputLocation:
 savepointsLocation:
   path: dummy/path
 outputSettings:
+  exportTarget: file
+  saveIntoJdbcRaw: true
+  saveIntoJdbcMerged: true
+  fileFormat: csv
   includeColumnNames: bananas #this is not a boolean
-  saveAsSingleFileCSV: true
+  saveAsSingleFile: true
   saveIntoTimestampDirectory: true

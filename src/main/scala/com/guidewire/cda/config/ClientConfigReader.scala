@@ -17,8 +17,13 @@ private[cda] case class OutputLocation(path: String)
 
 private[cda] case class SavepointsLocation(path: String)
 
-private[cda] case class OutputSettings(includeColumnNames: Boolean,
-                                       saveAsSingleFileCSV: Boolean,
+private[cda] case class OutputSettings(tablesToInclude: String,
+                                       saveIntoJdbcRaw: Boolean,
+                                       saveIntoJdbcMerged: Boolean,
+                                       exportTarget: String,
+                                       fileFormat: String,
+                                       includeColumnNames: Boolean,
+                                       saveAsSingleFile: Boolean,
                                        saveIntoTimestampDirectory: Boolean)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
@@ -28,12 +33,27 @@ private[cda] case class SparkTuning(maxResultSize: String,
                                     driverMemory: String,
                                     executorMemory: String)
 
+/** */
+private[cda] case class JdbcConnectionRaw(jdbcUsername: String,
+                                          jdbcPassword: String,
+                                          jdbcUrl: String,
+                                          jdbcSchema: String,
+                                          jdbcSaveMode: String)
+
+private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
+                                             jdbcPassword: String,
+                                             jdbcUrl: String,
+                                             jdbcSchema: String,
+                                             jdbcApplyLatestUpdatesOnly: Boolean)
+
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,
                         savepointsLocation: SavepointsLocation,
                         outputSettings: OutputSettings,
                         var performanceTuning: PerformanceTuning,
-                        sparkTuning: SparkTuning)
+                        sparkTuning: SparkTuning,
+                        jdbcConnectionRaw: JdbcConnectionRaw,
+                        jdbcConnectionMerged: JdbcConnectionMerged)
 
 object ClientConfigReader {
 
@@ -78,6 +98,8 @@ object ClientConfigReader {
     validateOutputSettings(clientConfig)
     validatePerformanceTuning(clientConfig)
     validateSparkTuning(clientConfig)
+    validateJdbcConnectionRaw(clientConfig)
+    validateJdbcConnectionMerged(clientConfig)
   }
 
   /** validateSourceLocation
@@ -123,30 +145,6 @@ object ClientConfigReader {
     }
   }
 
-  /** validateSavepointsLocation
-   *
-   * @param clientConfig instance to validate, for performance settings
-   */
-  private def validateSavepointsLocation(clientConfig: ClientConfig): Unit = {
-    try {
-      require(clientConfig.savepointsLocation != null, "savepointsLocation section is missing in the config file")
-    } catch {
-      case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
-    }
-
-    try {
-      require(clientConfig.savepointsLocation.path != null, "savepointsLocation.path is blank")
-    } catch {
-      case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
-    }
-
-    try {
-      require(clientConfig.savepointsLocation.path.endsWith("/") != true, "savepointsLocation.path has a trailing slash, remove it")
-    } catch {
-      case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter has an invalid value", e)
-    }
-  }
-
   /** validateOutputSettings
    *
    * @param clientConfig instance to validate, for performance settings
@@ -159,6 +157,35 @@ object ClientConfigReader {
     }
 
     //All boolean parameters will get a default value of false if they are not in the config.yaml file
+
+    //Export options must be either file or jdbc
+    val validExportOptions = List("file", "jdbc")
+    try {
+      require(validExportOptions.contains(clientConfig.outputSettings.exportTarget.toLowerCase()),
+        "outputSettings.exportTarget is is not valid.  Valid options are 'file' or 'jdbc'.")
+    } catch {
+      case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
+    }
+
+    //If saving to file then file format must be either csv or parquet.
+    if (clientConfig.outputSettings.exportTarget=="file") {
+      val validFileOptions = List("csv", "parquet")
+      try {
+        require(validFileOptions.contains(clientConfig.outputSettings.fileFormat.toLowerCase()),
+          "outputSettings.fileFormat is is not valid.  Valid options are 'csv' or 'parquet'.")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
+      }
+    }
+
+    if (clientConfig.outputSettings.exportTarget=="jdbc") {
+      try {
+        require(clientConfig.outputSettings.saveIntoJdbcMerged || clientConfig.outputSettings.saveIntoJdbcRaw,
+          "If selecting 'jdbc' exportTarget, either saveIntoJdbcMerged or saveIntoJdbcRaw must be set to true")
+      } catch {
+        case e: IllegalArgumentException => throw MissingConfigParameterException("Config parameter is invalid in the config file", e)
+      }
+    }
   }
 
   /** validatePerformanceTuning - this section is totally optional, since most users wont know what to set the values to
@@ -188,7 +215,8 @@ object ClientConfigReader {
 
   /**
    * Assert that a condition holds for a parameter value, throwing an exception if it doesn't.
-   * @param condition The condition to check.
+   *
+   * @param condition    The condition to check.
    * @param errorMessage The error message provided if the condition doesn't hold.
    * @throws InvalidConfigParameterException if the condition doesn't hold.
    */
@@ -219,4 +247,97 @@ object ClientConfigReader {
           s"sparkTuning.maxResultSize value '$maxResultSize' must be 0 or match the this format: $validMemoryArgumentRegex"))
     })
   }
+
+  /** validateSavepointsLocation
+   *
+   * @param clientConfig instance to validate, for performance settings
+   */
+  private def validateSavepointsLocation(clientConfig: ClientConfig): Unit = {
+    try {
+      require(clientConfig.savepointsLocation != null, "savepointsLocation section is missing in the config file")
+    } catch {
+      case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
+    }
+
+    try {
+      require(clientConfig.savepointsLocation.path != null, "savepointsLocation.path is blank")
+    } catch {
+      case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+    }
+
+    try {
+      require(clientConfig.savepointsLocation.path.endsWith("/") != true, "savepointsLocation.path has a trailing slash, remove it")
+    } catch {
+      case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter has an invalid value", e)
+    }
+  }
+
+  /** validateJdbcConnectionRaw
+   *
+   * @param clientConfig instance to validate, for performance settings
+   */
+  private def validateJdbcConnectionRaw(clientConfig: ClientConfig): Unit = {
+    // If saving to JDBC then validate the jdbcConnection section.
+    if (clientConfig.outputSettings.saveIntoJdbcRaw) {
+      try {
+        require(clientConfig.jdbcConnectionRaw != null, "jdbcConnectionRaw section is missing in the config file")
+      } catch {
+        case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
+      }
+
+      try {
+        require(clientConfig.jdbcConnectionRaw.jdbcUrl != null, "jdbcConnectionRaw.jdbcUrl is blank")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+      }
+
+      try {
+        require(clientConfig.jdbcConnectionRaw.jdbcSchema != null, "jdbcConnectionRaw.jdbcSchema is blank")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+      }
+
+      try {
+        require(clientConfig.jdbcConnectionRaw.jdbcSaveMode != null, "jdbcConnectionRaw.jdbcSaveMode is blank")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+      }
+      val validOptions = List("overwrite", "append")
+      try {
+        require(validOptions.contains(clientConfig.jdbcConnectionRaw.jdbcSaveMode.toLowerCase()),
+          "jdbcConnection.jdbcSaveMode is is not valid.  Valid options are 'overwrite' or 'append'.")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
+      }
+
+    }
+  }
+
+  /** validateJdbcConnectionMerged
+   *
+   * @param clientConfig instance to validate, for performance settings
+   */
+  private def validateJdbcConnectionMerged(clientConfig: ClientConfig): Unit = {
+    // If saving to JDBC then validate the jdbcConnection section.
+    if (clientConfig.outputSettings.saveIntoJdbcMerged) {
+      try {
+        require(clientConfig.jdbcConnectionMerged != null, "validateJdbcConnectionMerged section is missing in the config file")
+      } catch {
+        case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
+      }
+
+      try {
+        require(clientConfig.jdbcConnectionMerged.jdbcUrl != null, "jdbcConnectionMerged.jdbcUrl is blank")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+      }
+
+      try {
+        require(clientConfig.jdbcConnectionMerged.jdbcSchema != null, "jdbcConnectionMerged.jdbcSchema is blank")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+      }
+    }
+  }
+
 }

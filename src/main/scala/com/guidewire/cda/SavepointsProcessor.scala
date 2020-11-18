@@ -74,8 +74,8 @@ class SavepointsProcessor(directoryPath: String) {
   /** Write the timestamp for the table into the savepoints file.
    * Example entry in savepoints json:
    * {
-   *   "note": "1562112543749"
-   *   ...
+   * "note": "1562112543749"
+   * ...
    * }
    *
    * WARNING - The method is synchronized to ensure only 1 write at a time; the method is fast so it should be okay

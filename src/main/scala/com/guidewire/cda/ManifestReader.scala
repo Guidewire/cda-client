@@ -22,7 +22,7 @@ object ManifestReader {
   /** Function to first fetch manifest.json file from s3 as a string based on
    * parameters from config file, then use jackson to parse manifest JSON to a scala map
    *
-   * @param bucketName is the name of S3 bucket where the manifest is stored
+   * @param bucketName  is the name of S3 bucket where the manifest is stored
    * @param manifestKey is the path in S3 where the manifest is stored
    * @return
    */
@@ -55,10 +55,10 @@ object ManifestReader {
    * "totalProcessedRecordsCount": 240000,
    * "dataFilesPath": "s3://cda-client-test/taccount
    * "schemaHistory": {
-   *   "123456789": "1562112543749"
+   * "123456789": "1562112543749"
    * }
    *
-   * @param bucketName is the name of S3 bucket where the manifest is stored
+   * @param bucketName  is the name of S3 bucket where the manifest is stored
    * @param manifestKey is the path in S3 where the manifest is stored
    * @return Manifest contents as string
    */

@@ -6,9 +6,27 @@ outputLocation:
 savepointsLocation:
   path: dummy/path
 outputSettings:
+  exportTarget: file
+  saveIntoJdbcRaw: true
+  saveIntoJdbcMerged: true
+  fileFormat: csv
   includeColumnNames: true
-  saveAsSingleFileCSV: true
+  saveAsSingleFile: true
   #saveIntoTimestampDirectory: true #Should default missing boolean to false
+jdbcConnectionRaw:
+###POSTGRESQL###
+  jdbcUsername: postgres
+  jdbcPassword: Gw_123!
+  jdbcUrl: 'jdbc:postgresql://localhost/CDARaw'
+  jdbcSchema: public
+  jdbcSaveMode: append
+jdbcConnectionMerged:
+###POSTGRESQL###
+  jdbcUsername: postgres
+  jdbcPassword: Gw_123!
+  jdbcUrl: 'jdbc:postgresql://localhost/CDA'
+  jdbcSchema: public
+  jdbcApplyLatestUpdatesOnly: true
 # This section is optional
 # performanceTuning:
 #   numberOfJobsInParallelMaxCount: 5
