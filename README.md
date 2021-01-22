@@ -103,6 +103,7 @@ java -jar cloud-data-access-client-1.0.jar --configPath "config.yaml"
 <details>
 <summary>Click to expand</summary>
 Configuration parameters are specified through a .yaml file (typically named config.yaml). 
+   <p> </p>
 <details>
 <summary>Click to see the entire config.yaml file</summary>
 <p> 
