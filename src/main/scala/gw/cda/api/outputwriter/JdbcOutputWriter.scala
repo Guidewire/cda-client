@@ -578,10 +578,10 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       // These are the OOTB columns we have found so far.
       val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
       (tableNameNoSchema, fieldName) match {
-        case ("cc_outboundrecord", "\"content\"") |
-             ("cc_contactorigvalue", "\"origvalue\"") |
-             ("pc_diagratingworksheet", "\"diagnosticcapture\"") |
-             ("cc_note", "\"body\"") => largeStringDataType
+        case ("cc_outboundrecord", "content") |
+             ("cc_contactorigvalue", "origval as ue") |
+             ("pc_diagratingworksheet", "diagnosticcapture") |
+             ("cc_note", "body") => largeStringDataType
         case _                       => stringDataType
       }
     }
@@ -620,7 +620,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
         ddlPrimaryKey = ddlPrimaryKey + "(\"id\")"
       }
       else {
-        ddlPrimaryKey = ddlPrimaryKey + "(\"id\", \"gwcbi___seqval_hex\")"
+        ddlPrimaryKey = ddlPrimaryKey + "(\"id\", \"gwcbi___seqval_hex\", \"gwcbi___operation\")"
       }
       log.info(s"$jdbcWriteType - $ddlPrimaryKey")
       stmt.execute(ddlPrimaryKey)
