@@ -217,7 +217,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     tableDataFrameWrapperForMicroBatch.dataFrame.cache()
 
     // Get list of CDA internal use columns to get rid of.
-    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
+    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && colName.toLowerCase.startsWith("gwcbi___"))
 
     // Log total rows to be merged for this fingerprint.
     val totalCount = tableDataFrameWrapperForMicroBatch.dataFrame.count()
@@ -291,8 +291,8 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       val colNamesArray = updateDF.columns.toBuffer
       // Remove the id and sequence from the list of columns so we can handle them separately.
       // We will be grouping by the id and the sequence will be set as the first item in the list of columns.
-      colNamesArray --= Array("id", "gwcbi___seqval_hex")
-      val colNamesString = "gwcbi___seqval_hex, " + colNamesArray.mkString(",")
+      colNamesArray --= Array("id")
+      val colNamesString = colNamesArray.mkString(",")
 
       val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
         // Find the latest change for each id based on the gwcbi___seqval_hex.
@@ -303,12 +303,12 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
         updateDF
           .selectExpr(Seq("id", s"struct($colNamesString) as otherCols"): _*)
           .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
-          .selectExpr("latest.*", "id")
+          .selectExpr("latest.*", "id", "latest.gwcbi___seqval_hex as hexseqvalue")
           .drop(dropList: _*)
           .cache()
       } else {
         // Retain all updates.  Sort so they are applied in the correct order.
-        val colVar = colNamesString + ",id"
+        val colVar = colNamesString + ",id, gwcbi___seqval_hex as hexseqvalue"
         updateDF
           .selectExpr(colVar.split(","): _*)
           .sort(col("gwcbi___seqval_hex").asc)
@@ -326,10 +326,11 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       }
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
-      val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
+      val colListForSetClause = latestChangeForEachID.columns
+        .filter(_ != "id")
+        .filter(_ != "hexseqvalue")
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
-      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ?"""
-      //      val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE \"id\" = ?"
+      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ? AND "gwcbi___seqval_hex" < ? """
       log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
@@ -398,7 +399,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       val dialect = JdbcDialects.get(url)
       val tableSchemaDef = tableDataFrame.schema
       val fileSchemaDef = if (jdbcWriteType == JdbcWriteType.Merged) {
-        val dropList = fileDataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
+        val dropList = fileDataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && colName.toLowerCase.startsWith("gwcbi___"))
         fileDataFrame.drop(dropList: _*).schema
       } else {
         fileDataFrame.schema
@@ -523,7 +524,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     var notNullCols = List("id", "gwcbi___operation", "gwcbi___seqval_hex")
     if (jdbcWriteType == JdbcWriteType.Merged) {
       // For merged data, include publicid, retired, and typecode in list of not null columns
-      // so they can be included in unique index definitions.
+      // so they can be included in index or constraint definitions.
       notNullCols = notNullCols ++ List("publicid", "retired", "typecode")
     }
     // Build the list of columns in alphabetic order.
