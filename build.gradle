@@ -33,6 +33,7 @@ dependencies {
   implementation "com.microsoft.sqlserver:mssql-jdbc:$sqlserverVersion"
   implementation "org.postgresql:postgresql:$postgresqlVersion"
   implementation "com.oracle.database.jdbc:ojdbc8:$oracleVersion"
+  implementation "org.apache.spark:spark-sql-kafka-0-10_$scalaVersion:2.4.7"
 }
 
 wrapper {

@@ -33,7 +33,6 @@ private[cda] case class SparkTuning(maxResultSize: String,
                                     driverMemory: String,
                                     executorMemory: String)
 
-/** */
 private[cda] case class JdbcConnectionRaw(jdbcUsername: String,
                                           jdbcPassword: String,
                                           jdbcUrl: String,
@@ -46,6 +45,8 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcSchema: String,
                                              jdbcApplyLatestUpdatesOnly: Boolean)
 
+private[cda] case class KafkaSettings(bootstrapServer: String)
+
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,
                         savepointsLocation: SavepointsLocation,
@@ -53,7 +54,8 @@ case class ClientConfig(sourceLocation: SourceLocation,
                         var performanceTuning: PerformanceTuning,
                         sparkTuning: SparkTuning,
                         jdbcConnectionRaw: JdbcConnectionRaw,
-                        jdbcConnectionMerged: JdbcConnectionMerged)
+                        jdbcConnectionMerged: JdbcConnectionMerged,
+                        kafkaSettings: KafkaSettings)
 
 object ClientConfigReader {
 
@@ -100,6 +102,7 @@ object ClientConfigReader {
     validateSparkTuning(clientConfig)
     validateJdbcConnectionRaw(clientConfig)
     validateJdbcConnectionMerged(clientConfig)
+    validateKafkaSettings(clientConfig)
   }
 
   /** validateSourceLocation
@@ -159,10 +162,10 @@ object ClientConfigReader {
     //All boolean parameters will get a default value of false if they are not in the config.yaml file
 
     //Export options must be either file or jdbc
-    val validExportOptions = List("file", "jdbc")
+    val validExportOptions = List("file", "jdbc", "kafka")
     try {
       require(validExportOptions.contains(clientConfig.outputSettings.exportTarget.toLowerCase()),
-        "outputSettings.exportTarget is is not valid.  Valid options are 'file' or 'jdbc'.")
+        "outputSettings.exportTarget is is not valid.  Valid options are 'file' or 'jdbc' or 'kafka'.")
     } catch {
       case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
     }
@@ -184,6 +187,17 @@ object ClientConfigReader {
           "If selecting 'jdbc' exportTarget, either saveIntoJdbcMerged or saveIntoJdbcRaw must be set to true")
       } catch {
         case e: IllegalArgumentException => throw MissingConfigParameterException("Config parameter is invalid in the config file", e)
+      }
+    }
+
+    //If sending to Kafka then file format must be either json or [TBD].
+    if (clientConfig.outputSettings.exportTarget=="kafka") {
+      val validFileOptions = List("json")
+      try {
+        require(validFileOptions.contains(clientConfig.outputSettings.fileFormat.toLowerCase()),
+          "outputSettings.fileFormat is is not valid.  Valid option is 'json'.")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is invalid in the config file", e)
       }
     }
   }
@@ -334,6 +348,26 @@ object ClientConfigReader {
 
       try {
         require(clientConfig.jdbcConnectionMerged.jdbcSchema != null, "jdbcConnectionMerged.jdbcSchema is blank")
+      } catch {
+        case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
+      }
+    }
+  }
+
+  /** validateKafkaSettings
+   *
+   * @param clientConfig instance to validate, for performance settings
+   */
+  private def validateKafkaSettings(clientConfig: ClientConfig): Unit = {
+    if (clientConfig.outputSettings.exportTarget == "kafka") {
+      try {
+        require(clientConfig.kafkaSettings != null, "kafkaSettings section is missing in the config file")
+      } catch {
+        case e: IllegalArgumentException => throw MissingConfigParameterException("Config section is missing from the config file", e)
+      }
+
+      try {
+        require(clientConfig.kafkaSettings.bootstrapServer != null, "kafkaSettings.bootstrapServer is blank")
       } catch {
         case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
       }
