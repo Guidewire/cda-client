@@ -24,7 +24,8 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        fileFormat: String,
                                        includeColumnNames: Boolean,
                                        saveAsSingleFile: Boolean,
-                                       saveIntoTimestampDirectory: Boolean)
+                                       saveIntoTimestampDirectory: Boolean,
+                                       largeTextFields: String)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
                                           var numberOfThreadsPerJob: Int)
