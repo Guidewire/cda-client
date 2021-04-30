@@ -36,10 +36,13 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.types.StructType
 
-
 private[outputwriter] class JdbcOutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
                                              override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
                                              override val clientConfig: ClientConfig) extends OutputWriter {
+
+  val tableDotColumnValues: Array[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",")
+
+  private[outputwriter] val tableColumnValues:Array[String] = tableDotColumnValues
 
   override def validate(): Unit = {
     if (!Files.isDirectory(Paths.get(outputPath))) {
@@ -216,8 +219,8 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
 
     tableDataFrameWrapperForMicroBatch.dataFrame.cache()
 
-    // Get list of CDA internal use columns to get rid of.
-    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && colName.toLowerCase.startsWith("gwcbi___"))
+    // Get list of CDA internal use columns to get rid of - including both the gwcbi___ and client application-created gwcdac__ columns
+    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && (colName.toLowerCase.startsWith("gwcbi___") || colName.toLowerCase.startsWith("gwcdac__")))
 
     // Log total rows to be merged for this fingerprint.
     val totalCount = tableDataFrameWrapperForMicroBatch.dataFrame.count()
@@ -399,7 +402,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       val dialect = JdbcDialects.get(url)
       val tableSchemaDef = tableDataFrame.schema
       val fileSchemaDef = if (jdbcWriteType == JdbcWriteType.Merged) {
-        val dropList = fileDataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && colName.toLowerCase.startsWith("gwcbi___"))
+        val dropList = fileDataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && (colName.toLowerCase.startsWith("gwcbi___") || colName.toLowerCase.startsWith("gwcdac__")))
         fileDataFrame.drop(dropList: _*).schema
       } else {
         fileDataFrame.schema
@@ -573,18 +576,15 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"               => "BLOB"
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
+
     val fieldNameQuoted = dialect.quoteIdentifier(fieldName)
     val fieldDataTypeDefinition = if (fieldDataType == StringType) {
       // TODO Consider making the determination for the need for very large text columns configurable.
       // These are the OOTB columns we have found so far.
       val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
-      (tableNameNoSchema, fieldName) match {
-        case ("cc_outboundrecord", "content") |
-             ("cc_contactorigvalue", "origval as ue") |
-             ("pc_diagratingworksheet", "diagnosticcapture") |
-             ("cc_note", "body") => largeStringDataType
-        case _                       => stringDataType
-      }
+      val currentTableColumn = (tableNameNoSchema+"."+fieldName)
+      if (!tableDotColumnValues.filter(_ == currentTableColumn).isEmpty) largeStringDataType
+      else stringDataType
     }
     else if (fieldDataType == BinaryType) blobDataType
     else if (dbProductName == "Oracle" && fieldDataType.toString.substring(0,7)=="Decimal") {

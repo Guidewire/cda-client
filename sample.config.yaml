@@ -1,0 +1,82 @@
+sourceLocation:
+  bucketName: <bucket name>
+  manifestKey: manifest.json
+outputLocation:
+  path: <folder name>
+savepointsLocation:
+  path: <folder name>
+outputSettings:
+  # tablesToInclude is a comma delimited list of tables to include. leave blank or omit to include all tables in the output.
+  tablesToInclude:
+  # valid options for exportTarget are file or jdbc
+  exportTarget: jdbc
+  saveIntoJdbcRaw: true
+  saveIntoJdbcMerged: true
+  #fileFormat is required if saveIntoFile is true.
+  #  valid options for fileFormat are csv or parquet for exportTarge="file".
+  fileFormat: csv
+  includeColumnNames: true
+  saveAsSingleFile: false
+  saveIntoTimestampDirectory: true
+  # largeTextFields is a comma delimited list of table.column values that must allow max length varchar types
+  #   If tables not already created fields will get created with max length varchar based on database platform
+  #   If table already exists and this has to be added, you must also manually ALTER TABLE to expand the column length. Values you **must** expand to for code to pick up the changes and process properly:
+  #    case "Microsoft SQL Server" => "VARCHAR(max)"
+  #    case "PostgreSQL"           => "VARCHAR"
+  #    case "Oracle"               => "VARCHAR2(32767)" // requires MAX_STRING_SIZE Oracle parameter to be set to EXTENDED.
+  largeTextFields: cc_outboundrecord.content, cc_contactorigvalue.origval, pc_diagratingworksheet.diagnosticcapture, cc_note.body, bc_statementbilledworkitem.exception, bc_invoicebilledworkitem.exception, pc_outboundrecord.content, pc_datachange.externalreference, pc_datachange.gosu, bc_workflowworkitem.exception
+jdbcConnectionRaw:
+  ###POSTGRESQL###
+  #  jdbcUsername: <user>
+  #  jdbcPassword: <password>
+  #  jdbcUrl: 'jdbc:postgresql://localhost/<database>'
+  #  jdbcSchema: <schema>
+
+  ###ORACLE###
+  #  jdbcUsername: <user>
+  #  jdbcPassword: <password>
+  #  jdbcUrl: 'jdbc:oracle:thin:XEPDB1/xepdb1@//localhost:1521/XEPDB1'
+  #  jdbcSchema: '<schema>'
+
+  ###MSSQL###
+  jdbcUsername: novalue
+  jdbcPassword: nopwd
+  jdbcUrl: 'jdbc:sqlserver://<host>\<instance>;databaseName=<database name>;integratedSecurity=true'
+  jdbcSchema: dbo
+
+  # when saveIntoJdbcMerged is true, savemode is not relavant.
+  jdbcSaveMode: append
+jdbcConnectionMerged:
+  ###POSTGRESQL###
+  #  jdbcUsername: <user>
+  #  jdbcPassword: <password>
+  #  jdbcUrl: 'jdbc:postgresql://localhost/<database>'
+  #  jdbcSchema: <schema>
+
+  ###ORACLE###
+  #  jdbcUsername: <user>
+  #  jdbcPassword: <password>
+  #  jdbcUrl: 'jdbc:oracle:thin:XEPDB1/xepdb1@//localhost:1521/XEPDB1'
+  #  jdbcSchema: '<schema>'
+
+  ###MSSQL###
+  jdbcUsername: novalue
+  jdbcPassword: nopwd
+  jdbcUrl: 'jdbc:sqlserver://<host>\<instance>;databaseName=<database name>;integratedSecurity=true'
+  jdbcSchema: dbo
+
+  jdbcApplyLatestUpdatesOnly: true
+#performanceTuning:
+#  numberOfJobsInParallelMaxCount: 32
+#  numberOfThreadsPerJob: 15
+#sparkTuning:
+#  maxResultSize: 3G
+#  driverMemory: 6g
+#  executorMemory: 1g
+performanceTuning:
+  numberOfJobsInParallelMaxCount: 12
+  numberOfThreadsPerJob: 6
+sparkTuning:
+  maxResultSize: 24g
+#  driverMemory: 6g
+#  executorMemory: 1g

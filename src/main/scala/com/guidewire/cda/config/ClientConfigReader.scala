@@ -24,7 +24,8 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        fileFormat: String,
                                        includeColumnNames: Boolean,
                                        saveAsSingleFile: Boolean,
-                                       saveIntoTimestampDirectory: Boolean)
+                                       saveIntoTimestampDirectory: Boolean,
+                                       largeTextFields: String)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
                                           var numberOfThreadsPerJob: Int)
@@ -33,7 +34,6 @@ private[cda] case class SparkTuning(maxResultSize: String,
                                     driverMemory: String,
                                     executorMemory: String)
 
-/** */
 private[cda] case class JdbcConnectionRaw(jdbcUsername: String,
                                           jdbcPassword: String,
                                           jdbcUrl: String,
@@ -45,6 +45,8 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcUrl: String,
                                              jdbcSchema: String,
                                              jdbcApplyLatestUpdatesOnly: Boolean)
+
+private[cda] case class KafkaSettings(bootstrapServer: String)
 
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,
@@ -186,6 +188,7 @@ object ClientConfigReader {
         case e: IllegalArgumentException => throw MissingConfigParameterException("Config parameter is invalid in the config file", e)
       }
     }
+
   }
 
   /** validatePerformanceTuning - this section is totally optional, since most users wont know what to set the values to

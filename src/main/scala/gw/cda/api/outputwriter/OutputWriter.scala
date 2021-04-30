@@ -219,13 +219,14 @@ object OutputWriter {
 
   // The apply() is like a builder, caller can create without using the 'new' keyword
   def apply(outputWriterConfig: OutputWriterConfig): OutputWriter = {
-    if (outputWriterConfig.clientConfig.outputSettings.exportTarget == "file") {
-      if (outputWriterConfig.outputPath.startsWith("s3://"))
-        new S3OutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
-      else
-        new LocalFilesystemOutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
-    } else {
-      new JdbcOutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+    outputWriterConfig.clientConfig.outputSettings.exportTarget match {
+      case "file" => {
+        if (outputWriterConfig.outputPath.startsWith("s3://"))
+          new S3OutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+        else
+          new LocalFilesystemOutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+      }
+      case "jdbc" => new JdbcOutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
     }
   }
 
