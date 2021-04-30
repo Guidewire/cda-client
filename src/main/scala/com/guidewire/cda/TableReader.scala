@@ -503,8 +503,6 @@ class TableReader(clientConfig: ClientConfig) {
 
         DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint, jdbcDataFrame)
       }
-      case "kafka" =>
-        DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint, dataFrameAdditionalColumns)
     }
   }
 
