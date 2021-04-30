@@ -83,6 +83,7 @@ outputSettings:
   includeColumnNames: ...
   saveAsSingleFile: ...
   saveIntoTimestampDirectory: ...
+  largeTextFields: ...
 jdbcConnectionRaw:
   jdbcUsername: ...
   jdbcPassword: ...
@@ -126,7 +127,15 @@ Under "*outputLocation*":
 * "*includeColumnNames*" boolean (defaults to false) - should be "true" to include a row of column names at the top of the csv file for each table, and "false" for no header row.
 * "*saveAsSingleFile*" boolean (defaults to false) - should be "true" for writing out a single file (.csv or .parquet) per table, and "false" to have multiple/smaller files be written based on SPARK partitioning.
 * "*saveIntoTimestampDirectory*" boolean (defaults to false) - should be "true" to save the CSV files into a directory with savepoint timestamp (/outputLocation/path/table/timestamp/*.csv), and "false" to save directly into the table directory (/outputLocation/path/table/*.csv).
-
+* "*largeTextFields*" is a comma delimited list of table.column values that must allow max length varchar types.  
+    * If tables have not already been created the fields in the list will get created with max length varchar based on database platform.  
+    * If table already exists and this has to be added, you must also manually ALTER TABLE to expand the column length. Values you ***must*** expand to for code to pick up the changes and process properly:  
+      * case "Microsoft SQL Server" => "VARCHAR(max)"  
+      * case "PostgreSQL"           => "VARCHAR"  
+      * case "Oracle"               => "VARCHAR2(32767)" // requires MAX_STRING_SIZE Oracle parameter to be set to EXTENDED.  
+    * Some known table.column values that require "largeTextFields" inclusion:  
+      * cc_outboundrecord.content, cc_contactorigvalue.origval, pc_diagratingworksheet.diagnosticcapture, cc_note.body, bc_statementbilledworkitem.exception, bc_invoicebilledworkitem.exception, pc_outboundrecord.content, pc_datachange.externalreference, pc_datachange.gosu, bc_workflowworkitem.exception
+  
 *jdbcConnectionRaw*: (optional section)
 
 * "*jdbcUsername*" is the user name used to connect to the database. can be a placeholder value if using windows authentication for database connectivity. 
