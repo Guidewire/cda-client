@@ -100,7 +100,7 @@ class TableReader(clientConfig: ClientConfig) {
       val manifestKey = clientConfig.sourceLocation.manifestKey
       val manifestMap: ManifestMap = ManifestReader.processManifest(bucketName, manifestKey)
       var useManifestMap = manifestMap
-//        .-("") //TODO Make a block-list for tables configurable
+        //.-("") //TODO Make a block-list for tables configurable
 
       // Prepare user configs log msg
       var logMsg = (s"""Starting Cloud Data Access Client:
@@ -468,7 +468,7 @@ class TableReader(clientConfig: ClientConfig) {
    */
   private[cda] def fetchDataFrameForTableTimestampSubfolder(tableTimestampSubfolderInfo: TableS3LocationWithTimestampInfo): DataFrameWrapper = {
     val s3URI = tableTimestampSubfolderInfo.timestampSubfolderURI
-    val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}*"
+    val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}*.parquet"
     log.info(s"Reading '${tableTimestampSubfolderInfo.tableName}' from $s3aURL, on thread ${Thread.currentThread()}")
     val dataFrame = spark.sqlContext.read.parquet(s3aURL)
 
