@@ -31,7 +31,7 @@ dependencies {
   implementation "org.apache.commons:commons-lang3:$apacheCommonsVersion"
   implementation "org.rogach:scallop_$scalaVersion:$scallopVersion"
   compile "com.microsoft.sqlserver:mssql-jdbc:$sqlserverVersion"
-  implementation "org.postgresql:postgresql:$postgresqlVersion"
+  compile "org.postgresql:postgresql:$postgresqlVersion"
   implementation "com.oracle.database.jdbc:ojdbc8:$oracleVersion"
 }
 

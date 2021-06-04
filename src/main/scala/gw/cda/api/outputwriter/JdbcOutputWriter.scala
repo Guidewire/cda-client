@@ -171,7 +171,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"                              => tableNameNoSchema.toUpperCase
       case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), clientConfig.jdbcConnectionRaw.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next()
 
     // Get some data we will need for later.
@@ -245,7 +245,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"               => tableNameNoSchema.toUpperCase
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), clientConfig.jdbcConnectionMerged.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next
 
     // Get some data we will need for later.
@@ -385,7 +385,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       "Oracle"
     }
 
-    if (tableExists(tableName, url, user, pswd)) {
+    if (tableExists(tableName, jdbcSchemaName, url, user, pswd)) {
       // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
       val sql = dbProductName match {
         case "Microsoft SQL Server" | "PostgreSQL" => s"(select * from $jdbcSchemaName.$tableName where 1=2) as $tableName"
@@ -489,7 +489,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     }
   }
 
-  def tableExists(tableName: String, url: String, user: String, pswd: String): Boolean = {
+  def tableExists(tableName: String, jdbcSchemaName: String, url: String, user: String, pswd: String): Boolean = {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
     val dbProductName = dbm.getDatabaseProductName
@@ -499,7 +499,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"                              => tableNameNoSchema.toUpperCase
       case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), jdbcSchemaName, tableNameCaseSensitive, Array("TABLE"))
 
     if (tables.next) {
       connection.close()
@@ -579,8 +579,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
 
     val fieldNameQuoted = dialect.quoteIdentifier(fieldName)
     val fieldDataTypeDefinition = if (fieldDataType == StringType) {
-      // TODO Consider making the determination for the need for very large text columns configurable.
-      // These are the OOTB columns we have found so far.
+
       val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
       val currentTableColumn = (tableNameNoSchema+"."+fieldName)
       if (!tableDotColumnValues.filter(_ == currentTableColumn).isEmpty) largeStringDataType
@@ -598,6 +597,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
         }
       }
     }
+    else if (dbProductName == "Microsoft SQL Server" && fieldDataType == TimestampType) "DATETIME2"
     else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
     val nullableQualifier = if (!fieldNullable) "NOT NULL" else ""
     columnDefinition.append(s"$fieldNameQuoted $fieldDataTypeDefinition $nullableQualifier")
