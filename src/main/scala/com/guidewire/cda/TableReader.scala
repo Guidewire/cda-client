@@ -216,8 +216,6 @@ class TableReader(clientConfig: ClientConfig) {
       log.info("All Copy Jobs have been completed")
 
     } finally {
-      //todo VERIFY THIS WORKS? (sc.stop())
-      sc.stop()
       spark.close
     }
 
