@@ -46,8 +46,6 @@ private[cda] case class JdbcConnectionMerged(jdbcUsername: String,
                                              jdbcSchema: String,
                                              jdbcApplyLatestUpdatesOnly: Boolean)
 
-private[cda] case class KafkaSettings(bootstrapServer: String)
-
 case class ClientConfig(sourceLocation: SourceLocation,
                         outputLocation: OutputLocation,
                         savepointsLocation: SavepointsLocation,

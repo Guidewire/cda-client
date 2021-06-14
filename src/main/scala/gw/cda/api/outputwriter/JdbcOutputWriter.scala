@@ -40,9 +40,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
                                              override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
                                              override val clientConfig: ClientConfig) extends OutputWriter {
 
-  val tableDotColumnValues: Array[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",")
-
-  private[outputwriter] val tableColumnValues:Array[String] = tableDotColumnValues
+  private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",").toSet
 
   override def validate(): Unit = {
     if (!Files.isDirectory(Paths.get(outputPath))) {
@@ -582,7 +580,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
 
       val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
       val currentTableColumn = (tableNameNoSchema+"."+fieldName)
-      if (!tableDotColumnValues.filter(_ == currentTableColumn).isEmpty) largeStringDataType
+      if (configLargeTextFields.contains(currentTableColumn)) largeStringDataType
       else stringDataType
     }
     else if (fieldDataType == BinaryType) blobDataType

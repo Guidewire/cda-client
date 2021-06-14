@@ -516,9 +516,7 @@ class TableReader(clientConfig: ClientConfig) {
     dataFrame.drop(dropList: _*)
   }
 
-  /** Function that takes a DataFrame corresponding to some table and drops internal columns that
-   * are not necessary for the client.
-   * Internal columns are currently defined as columns that begin with `gwcbi___`
+  /** Function that adds custom metadata columns to the dataframe for troubleshooting purposes
    *
    * @param dataFrame DataFrame with internal columns
    * @param tableTimestampSubfolderInfo TableTimestampSubfolderInfo
