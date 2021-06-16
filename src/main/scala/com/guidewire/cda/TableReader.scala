@@ -2,7 +2,6 @@ package com.guidewire.cda
 
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
-
 import com.amazonaws.services.s3.AmazonS3URI
 import com.amazonaws.services.s3.model.ListObjectsRequest
 import com.guidewire.cda.ManifestReader.ManifestMap
@@ -16,6 +15,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.functions.{lit, when}
 
 import scala.collection.JavaConversions._
 import scala.collection.parallel.ForkJoinTaskSupport
@@ -100,6 +100,7 @@ class TableReader(clientConfig: ClientConfig) {
       val manifestKey = clientConfig.sourceLocation.manifestKey
       val manifestMap: ManifestMap = ManifestReader.processManifest(bucketName, manifestKey)
       var useManifestMap = manifestMap
+        //.-("") //TODO Make a block-list for tables configurable
 
       // Prepare user configs log msg
       var logMsg = (s"""Starting Cloud Data Access Client:
@@ -131,7 +132,8 @@ class TableReader(clientConfig: ClientConfig) {
         val tablesList = tablesToInclude.split(",")
         logMsg = logMsg + (s"""
                               |Including ONLY ${tablesList.size} table(s): $tablesToInclude""".stripMargin)
-        useManifestMap = manifestMap.filterKeys(tablesList.contains)
+        useManifestMap = manifestMap
+          .filterKeys(tablesList.contains)
       }
 
       // Log user configs info we prepared above
@@ -464,16 +466,42 @@ class TableReader(clientConfig: ClientConfig) {
    */
   private[cda] def fetchDataFrameForTableTimestampSubfolder(tableTimestampSubfolderInfo: TableS3LocationWithTimestampInfo): DataFrameWrapper = {
     val s3URI = tableTimestampSubfolderInfo.timestampSubfolderURI
-    val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}*"
+    val s3aURL = s"s3a://${s3URI.getBucket}/${s3URI.getKey}*.parquet"
     log.info(s"Reading '${tableTimestampSubfolderInfo.tableName}' from $s3aURL, on thread ${Thread.currentThread()}")
-    // Adding in column renaming capabilities - we ran across the column name "interval", and cannot get the jdbc driver to stop creating the column with
-    //   double quotes around it in the table definition. When we execute the Merged code, it thinks the value is a literal and won't insert.
-    //   Adding additional .withColumnRenamed() lines below works in the event multiple columns need to be renamed.
     val dataFrame = spark.sqlContext.read.parquet(s3aURL)
-      .withColumnRenamed("interval", "interval_")
+
+    val dataFrameWrapper = manageDataFrameColumns(dataFrame, tableTimestampSubfolderInfo)
+    dataFrameWrapper
+  }
+
+  /** Function that takes a DataFrame corresponding to some table and manages the addition and removal of
+   * internal columns necessary for various forms of output.
+   * Internal columns are currently defined as columns that begin with `gwcbi___`
+   * Additional internal columns will include fingerprint and timestamp folder information prefixed with 'gwcdac__'
+   *
+   * @param dataFrame DataFrame with internal columns
+   * @param tableTimestampSubfolderInfo TableTimestampSubfolderInfo
+   * @return DataFrame that is the same as input, but has columns either added or removed
+   */
+  private[cda] def manageDataFrameColumns(dataFrame: DataFrame, tableTimestampSubfolderInfo: TableS3LocationWithTimestampInfo): DataFrameWrapper = {
     val dataFrameNoInternalColumns = dropIrrelevantInternalColumns(dataFrame)
-    DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint,
-      dataFrameNoInternalColumns)
+    val dataFrameAdditionalColumns = addCdaClientColumns(dataFrame, tableTimestampSubfolderInfo)
+
+    clientConfig.outputSettings.exportTarget match {
+      case "file" =>
+        DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint, dataFrameNoInternalColumns)
+      case "jdbc" => {
+        // Remove columns that will not insert properly into database tables ("spatial", "textdata")
+        val dropList = dataFrameAdditionalColumns.columns.filter(colName => colName.toLowerCase.contains("spatial") || colName.toLowerCase.equals("textdata"))
+
+        // Rename columns - column name "interval" is treated as internal reference with jdbc driver. had to rename with "_" on the end.
+        val jdbcDataFrame = dataFrameAdditionalColumns
+          .withColumnRenamed("interval", "interval_")
+          .drop(dropList: _*)
+
+        DataFrameWrapper(tableTimestampSubfolderInfo.tableName, tableTimestampSubfolderInfo.schemaFingerprint, jdbcDataFrame)
+      }
+    }
   }
 
   /** Function that takes a DataFrame corresponding to some table and drops internal columns that
@@ -484,13 +512,20 @@ class TableReader(clientConfig: ClientConfig) {
    * @return DataFrame that is the same as input, but has irrelevant internal columns removed
    */
   private[cda] def dropIrrelevantInternalColumns(dataFrame: DataFrame): DataFrame = {
-    val dropList = dataFrame.columns.filter(colName => (colName.toLowerCase.startsWith("gwcbi___") && !relevantInternalColumns.contains(colName))
-      // Get rid of geospatial columns.
-      || colName.toLowerCase.contains("spatial")
-      // Get rid of textdata columns. Contains XML data that won't insert into the database properly.
-      || colName.toLowerCase.equals("textdata"))
+    val dropList = dataFrame.columns.filter(colName => (colName.toLowerCase.startsWith("gwcbi___") && !relevantInternalColumns.contains(colName)))
     dataFrame.drop(dropList: _*)
+  }
 
+  /** Function that adds custom metadata columns to the dataframe for troubleshooting purposes
+   *
+   * @param dataFrame DataFrame with internal columns
+   * @param tableTimestampSubfolderInfo TableTimestampSubfolderInfo
+   * @return DataFrame that is the same as input, but has irrelevant internal columns removed
+   */
+  private[cda] def addCdaClientColumns(dataFrame: DataFrame, tableTimestampSubfolderInfo: TableS3LocationWithTimestampInfo): DataFrame = {
+    dataFrame
+      .withColumn("gwcdac__fingerprintfolder", when(lit(tableTimestampSubfolderInfo.schemaFingerprint).isNotNull, lit(tableTimestampSubfolderInfo.schemaFingerprint)).otherwise(lit(null)))
+      .withColumn("gwcdac__timestampfolder", when(lit(tableTimestampSubfolderInfo.subfolderTimestamp.toString).isNotNull, lit(tableTimestampSubfolderInfo.subfolderTimestamp.toString)).otherwise(lit(null)))
   }
 
   /** Function that takes two DataFrameWrapper objects that correspond to the same table and returns a

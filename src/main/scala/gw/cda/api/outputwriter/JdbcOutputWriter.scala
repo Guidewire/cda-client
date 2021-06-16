@@ -36,10 +36,11 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.types.StructType
 
-
 private[outputwriter] class JdbcOutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
                                              override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
                                              override val clientConfig: ClientConfig) extends OutputWriter {
+
+  private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",").toSet
 
   override def validate(): Unit = {
     if (!Files.isDirectory(Paths.get(outputPath))) {
@@ -168,7 +169,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"                              => tableNameNoSchema.toUpperCase
       case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), clientConfig.jdbcConnectionRaw.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next()
 
     // Get some data we will need for later.
@@ -216,8 +217,8 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
 
     tableDataFrameWrapperForMicroBatch.dataFrame.cache()
 
-    // Get list of CDA internal use columns to get rid of.
-    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
+    // Get list of CDA internal use columns to get rid of - including both the gwcbi___ and client application-created gwcdac__ columns
+    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && (colName.toLowerCase.startsWith("gwcbi___") || colName.toLowerCase.startsWith("gwcdac__")))
 
     // Log total rows to be merged for this fingerprint.
     val totalCount = tableDataFrameWrapperForMicroBatch.dataFrame.count()
@@ -242,7 +243,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"               => tableNameNoSchema.toUpperCase
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), clientConfig.jdbcConnectionMerged.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
     val tableExists = tables.next
 
     // Get some data we will need for later.
@@ -291,8 +292,8 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       val colNamesArray = updateDF.columns.toBuffer
       // Remove the id and sequence from the list of columns so we can handle them separately.
       // We will be grouping by the id and the sequence will be set as the first item in the list of columns.
-      colNamesArray --= Array("id", "gwcbi___seqval_hex")
-      val colNamesString = "gwcbi___seqval_hex, " + colNamesArray.mkString(",")
+      colNamesArray --= Array("id")
+      val colNamesString = colNamesArray.mkString(",")
 
       val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
         // Find the latest change for each id based on the gwcbi___seqval_hex.
@@ -303,12 +304,12 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
         updateDF
           .selectExpr(Seq("id", s"struct($colNamesString) as otherCols"): _*)
           .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
-          .selectExpr("latest.*", "id")
+          .selectExpr("latest.*", "id", "latest.gwcbi___seqval_hex as hexseqvalue")
           .drop(dropList: _*)
           .cache()
       } else {
         // Retain all updates.  Sort so they are applied in the correct order.
-        val colVar = colNamesString + ",id"
+        val colVar = colNamesString + ",id, gwcbi___seqval_hex as hexseqvalue"
         updateDF
           .selectExpr(colVar.split(","): _*)
           .sort(col("gwcbi___seqval_hex").asc)
@@ -326,10 +327,11 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       }
 
       // Build the sql Update statement to be used as a prepared statement for the Updates.
-      val colListForSetClause = latestChangeForEachID.columns.filter(_ != "id")
+      val colListForSetClause = latestChangeForEachID.columns
+        .filter(_ != "id")
+        .filter(_ != "hexseqvalue")
       val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
-      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ?"""
-      //      val updateStatement = "UPDATE " + tableName + " SET " + colNamesForSetClause + " WHERE \"id\" = ?"
+      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ? AND "gwcbi___seqval_hex" < ? """
       log.info(s"Merged - $updateStatement")
 
       // Get schema info required for updatePartition call.
@@ -381,7 +383,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       "Oracle"
     }
 
-    if (tableExists(tableName, url, user, pswd)) {
+    if (tableExists(tableName, jdbcSchemaName, url, user, pswd)) {
       // build a query that returns no data from the table.  This will still get us the schema definition which is all we need.
       val sql = dbProductName match {
         case "Microsoft SQL Server" | "PostgreSQL" => s"(select * from $jdbcSchemaName.$tableName where 1=2) as $tableName"
@@ -398,7 +400,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       val dialect = JdbcDialects.get(url)
       val tableSchemaDef = tableDataFrame.schema
       val fileSchemaDef = if (jdbcWriteType == JdbcWriteType.Merged) {
-        val dropList = fileDataFrame.columns.filter(colName => colName.toLowerCase.startsWith("gwcbi___"))
+        val dropList = fileDataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && (colName.toLowerCase.startsWith("gwcbi___") || colName.toLowerCase.startsWith("gwcdac__")))
         fileDataFrame.drop(dropList: _*).schema
       } else {
         fileDataFrame.schema
@@ -485,7 +487,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     }
   }
 
-  def tableExists(tableName: String, url: String, user: String, pswd: String): Boolean = {
+  def tableExists(tableName: String, jdbcSchemaName: String, url: String, user: String, pswd: String): Boolean = {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
     val dbProductName = dbm.getDatabaseProductName
@@ -495,7 +497,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"                              => tableNameNoSchema.toUpperCase
       case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), connection.getSchema(), tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog(), jdbcSchemaName, tableNameCaseSensitive, Array("TABLE"))
 
     if (tables.next) {
       connection.close()
@@ -523,7 +525,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     var notNullCols = List("id", "gwcbi___operation", "gwcbi___seqval_hex")
     if (jdbcWriteType == JdbcWriteType.Merged) {
       // For merged data, include publicid, retired, and typecode in list of not null columns
-      // so they can be included in unique index definitions.
+      // so they can be included in index or constraint definitions.
       notNullCols = notNullCols ++ List("publicid", "retired", "typecode")
     }
     // Build the list of columns in alphabetic order.
@@ -572,18 +574,14 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"               => "BLOB"
       case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
+
     val fieldNameQuoted = dialect.quoteIdentifier(fieldName)
     val fieldDataTypeDefinition = if (fieldDataType == StringType) {
-      // TODO Consider making the determination for the need for very large text columns configurable.
-      // These are the OOTB columns we have found so far.
+
       val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
-      (tableNameNoSchema, fieldName) match {
-        case ("cc_outboundrecord", "\"content\"") |
-             ("cc_contactorigvalue", "\"origvalue\"") |
-             ("pc_diagratingworksheet", "\"diagnosticcapture\"") |
-             ("cc_note", "\"body\"") => largeStringDataType
-        case _                       => stringDataType
-      }
+      val currentTableColumn = (tableNameNoSchema+"."+fieldName)
+      if (configLargeTextFields.contains(currentTableColumn)) largeStringDataType
+      else stringDataType
     }
     else if (fieldDataType == BinaryType) blobDataType
     else if (dbProductName == "Oracle" && fieldDataType.toString.substring(0,7)=="Decimal") {
@@ -597,6 +595,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
         }
       }
     }
+    else if (dbProductName == "Microsoft SQL Server" && fieldDataType == TimestampType) "DATETIME2"
     else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
     val nullableQualifier = if (!fieldNullable) "NOT NULL" else ""
     columnDefinition.append(s"$fieldNameQuoted $fieldDataTypeDefinition $nullableQualifier")
@@ -620,7 +619,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
         ddlPrimaryKey = ddlPrimaryKey + "(\"id\")"
       }
       else {
-        ddlPrimaryKey = ddlPrimaryKey + "(\"id\", \"gwcbi___seqval_hex\")"
+        ddlPrimaryKey = ddlPrimaryKey + "(\"id\", \"gwcbi___seqval_hex\", \"gwcbi___operation\")"
       }
       log.info(s"$jdbcWriteType - $ddlPrimaryKey")
       stmt.execute(ddlPrimaryKey)
