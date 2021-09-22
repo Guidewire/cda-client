@@ -1,8 +1,10 @@
 package com.guidewire.cda.config
 
 import com.fasterxml.jackson.databind.exc.InvalidFormatException
+import gw.cda.api.utils.AWSUtils
 import gw.cda.api.utils.ObjectMapperSupplier
 
+import java.net.URI
 import scala.io.Source
 
 /*
@@ -28,7 +30,8 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        largeTextFields: String)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
-                                          var numberOfThreadsPerJob: Int)
+                                          var numberOfThreadsPerJob: Int,
+                                          sparkMaster: String = "local")
 
 private[cda] case class SparkTuning(maxResultSize: String,
                                     driverMemory: String,
@@ -75,14 +78,18 @@ object ClientConfigReader {
    * @return Config case class with config fields
    */
   private[cda] def parseConfig(configPath: String): ClientConfig = {
-    val configSource = Source.fromFile(configPath)
     try {
-      val configYaml = configSource.getLines.mkString("\n")
+      val uri = new URI(configPath)
+      val configYaml = uri.getScheme match {
+        case "s3" => AWSUtils.S3Utils.getFileAsString(configPath)
+        case _    =>
+          val configSource = Source.fromFile(configPath)
+          configSource.getLines.mkString("\n")
+      }
       ObjectMapperSupplier.yamlMapper.readValue(configYaml, classOf[ClientConfig])
     } catch {
       case e: InvalidFormatException => throw InvalidConfigParameterException(s"There was an error while parsing the config file ($configPath), look at the CausedBy exception for details.", e)
-    } finally {
-      configSource.close
+      case i: Exception              => throw i
     }
   }
 

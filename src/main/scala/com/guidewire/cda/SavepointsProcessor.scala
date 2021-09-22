@@ -1,14 +1,17 @@
 package com.guidewire.cda
 
-import java.io.File
-import java.io.IOException
-import java.nio.file.Files
-import java.nio.file.Paths
-
+import com.amazonaws.services.s3.AmazonS3URI
+import gw.cda.api.utils.AWSUtils
 import gw.cda.api.utils.ObjectMapperSupplier
+import gw.cda.api.utils.S3ClientSupplier
 import org.apache.commons.io.FileUtils
 import org.apache.logging.log4j.LogManager
 
+import java.io.File
+import java.io.IOException
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.Paths
 import scala.io.Source
 
 /**
@@ -23,9 +26,10 @@ class SavepointsProcessor(directoryPath: String) {
   private[cda] val savepointsDirPath = directoryPath
   private[cda] val savepointsFileName = "savepoints.json"
   private[cda] val savepointsFilePath = s"${this.savepointsDirPath}/$savepointsFileName"
+  private val savepointsFileURI = new URI(savepointsFilePath)
   private[cda] val savepointsFileExists = checkExists()
   private[cda] val savepointsDataMap: SavepointData = readSavepointsFile()
-
+  
   /** Check to see if there has been a savepoints json that already exists and return true or false.
    * Additionally, validate that the directory under which the savepoints json can be found does exist if
    * no savepoint currently exists, so that we can write to it.
@@ -33,12 +37,15 @@ class SavepointsProcessor(directoryPath: String) {
    * @return Boolean if there exists an already written savepoints json
    */
   private[cda] def checkExists(): Boolean = {
-    if (!Files.isDirectory(Paths.get(this.savepointsDirPath))) {
-      throw new IOException(s"Savepoints path ${this.savepointsDirPath} doesn't exist or isn't a directory")
+    savepointsFileURI.getScheme match {
+      case "s3" => AWSUtils.S3Utils.doesFileExist(savepointsFilePath)
+      case _    =>
+        if (!Files.isDirectory(Paths.get(this.savepointsDirPath))) {
+          throw new IOException(s"Savepoints path ${this.savepointsDirPath} doesn't exist or isn't a directory")
+        }
+        // The directory exists, see if the file exists
+        Files.exists(Paths.get(this.savepointsFilePath))
     }
-    // The directory exists, see if the file exists
-    val doesFileExist = Files.exists(Paths.get(this.savepointsFilePath))
-    doesFileExist
   }
 
   /** Read the contents of a savepoints json file into a map, which contains the last read timestamp for each table.
@@ -48,13 +55,13 @@ class SavepointsProcessor(directoryPath: String) {
   private[cda] def readSavepointsFile(): SavepointData = {
     if (this.savepointsFileExists) {
       log.info(s"Savepoints file '${this.savepointsFilePath}' exists")
-      val savepointsSource = Source.fromFile(this.savepointsFilePath)
-      try {
-        val savepointsJson = savepointsSource.getLines.mkString
-        ObjectMapperSupplier.jsonMapper.readValue(savepointsJson, classOf[SavepointData])
-      } finally {
-        savepointsSource.close
+      val savepointsJson = savepointsFileURI.getScheme match {
+        case "s3" => AWSUtils.S3Utils.getFileAsString(savepointsFilePath)
+        case _    =>
+          val savepointsSource = Source.fromFile(this.savepointsFilePath)
+          savepointsSource.getLines.mkString
       }
+      ObjectMapperSupplier.jsonMapper.readValue(savepointsJson, classOf[SavepointData])
     } else {
       log.info(s"Savepoints file '${this.savepointsFilePath}' does not exist")
       scala.collection.mutable.Map.empty
@@ -88,9 +95,14 @@ class SavepointsProcessor(directoryPath: String) {
     log.info(s"Updating savepoints file '${this.savepointsFilePath}', with=$newSavePointTuple")
     savepointsDataMap.put(tableName, newSavePointTimestamp) // upsert the instance variable with the new save point
     val newSavepointsJson = ObjectMapperSupplier.jsonMapper.writerWithDefaultPrettyPrinter.writeValueAsString(savepointsDataMap)
-    val newSavepointsFile = new File(savepointsFilePath)
-    FileUtils.writeStringToFile(newSavepointsFile, newSavepointsJson, null: String)
+    savepointsFileURI.getScheme match {
+      case "s3" =>
+        val amazonS3URI = new AmazonS3URI(savepointsFileURI)
+        S3ClientSupplier.s3Client.putObject(amazonS3URI.getBucket, amazonS3URI.getKey, newSavepointsJson)
+      case _    =>
+        val newSavepointsFile = new File(savepointsFilePath)
+        FileUtils.writeStringToFile(newSavepointsFile, newSavepointsJson, null: String)
+    }
     log.info(s"Updated savepoints file")
   }
-
 }
