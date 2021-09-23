@@ -2,8 +2,7 @@ package gw.cda.api.outputwriter
 
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
-import gw.cda.api.utils.AWSUtils
-import org.apache.commons.io.FileUtils
+import com.guidewire.cda.config.InvalidConfigParameterException
 import org.apache.spark.sql.{functions => sqlfun}
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.jdbc.JdbcDialect
@@ -27,53 +26,40 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.storage.StorageLevel
 
-import java.io.File
-import java.io.IOException
-import java.net.URI
-import java.nio.file.Files
-import java.nio.file.Paths
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.SQLException
 import java.util.Locale
+import scala.collection.JavaConverters.asScalaIteratorConverter
+import scala.util.Failure
+import scala.util.Success
+import scala.util.Try
 
-private[outputwriter] class JdbcOutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
-                                             override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
-                                             override val clientConfig: ClientConfig) extends OutputWriter {
+object JdbcWriteType extends Enumeration {
+  type JdbcWriteType = Value
+
+  val Raw = Value("Raw")
+  val Merged = Value("Merged")
+}
+
+private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientConfig) extends OutputWriter {
 
   private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",").toSet
+  private val DEFAULT_BATCH_SIZE: Long = 5000L
+  protected val batchSize: Long = if (clientConfig.outputSettings.jdbcBatchSize <= 0) DEFAULT_BATCH_SIZE else clientConfig.outputSettings.jdbcBatchSize
 
+  /**
+   * Validate DB connection URL and credentials.
+   */
   override def validate(): Unit = {
-    val pathExists = new URI(outputPath).getScheme match {
-      case "s3" => AWSUtils.S3Utils.doesPathExists(outputPath)
-      case _    => Files.isDirectory(Paths.get(outputPath))
+    if (clientConfig.outputSettings.saveIntoJdbcRaw) {
+      validateDBConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
+    } else if (clientConfig.outputSettings.saveIntoJdbcMerged) {
+      validateDBConnection(clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername, clientConfig.jdbcConnectionMerged.jdbcPassword)
     }
-    if (!pathExists) {
-      throw new IOException(s"$outputPath doesn't exist.")
-    }
-  }
-
-  override def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
-    val pathPrefix = this.outputPath
-    val basePathToFolder = getBasePathToFolder(pathPrefix, tableDataFrameWrapperForMicroBatch)
-    basePathToFolder
-  }
-
-  override def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
-    val pathPrefix = this.outputPath
-    val basePathToFolder = getBasePathToFolder(pathPrefix, tableDataFrameWrapperForMicroBatch)
-    val fullPathToSchema = s"$basePathToFolder/$schemaFileName"
-    fullPathToSchema
-  }
-
-  override def writeSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
-    val tableDF = tableDataFrameWrapperForMicroBatch.dataFrame
-    val yamlString = makeSchemaYamlString(tableDF)
-    val yamlPath = getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch)
-    val yamlFile = new File(yamlPath)
-    FileUtils.writeStringToFile(yamlFile, yamlString, null: String)
   }
 
   override def write(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
@@ -81,7 +67,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
 
     if (clientConfig.outputSettings.saveIntoJdbcRaw && clientConfig.outputSettings.saveIntoJdbcMerged) {
       // If we are saving to both raw and merged datasets then we need to commit and rollback the
-      // connections together since they share a common savevpoint.  If either fail then we need to
+      // connections together since they share a common savepoint.  If either fail then we need to
       // rollback both connections to keep them in sync.
       val rawConn = DriverManager.getConnection(clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername, clientConfig.jdbcConnectionRaw.jdbcPassword)
       rawConn.setAutoCommit(false) // Everything in the same db transaction.
@@ -152,234 +138,38 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     }
   }
 
-  /** Write RAW data to a JDBC target database.
-   *
-   * @param tableDataFrameWrapperForMicroBatch has the data to be written
+  /**
+   * Since all output types share a common savepoints.json,
+   * make sure there are no schema change issues for JdbcRaw or
+   * JdbcMerged before writing data for this fingerprint to any of the target types.
    */
-  def writeJdbcRaw(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
+  override def schemasAreConsistent(dataframe: DataFrame, tableName: String,
+                                    schemaFingerprint: String, sparkSession: SparkSession): Boolean = {
 
-    val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
-    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
+    val jdbcRawIsOk = if (clientConfig.outputSettings.saveIntoJdbcRaw) {
+      schemasAreConsistent(dataframe, clientConfig.jdbcConnectionRaw.jdbcSchema, tableName, schemaFingerprint,
+        clientConfig.jdbcConnectionRaw.jdbcUrl, clientConfig.jdbcConnectionRaw.jdbcUsername,
+        clientConfig.jdbcConnectionRaw.jdbcPassword, sparkSession, JdbcWriteType.Raw)
+    } else true
 
-    log.info(s"*** Writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+    val jdbcMergedIsOk = if (clientConfig.outputSettings.saveIntoJdbcMerged) {
+      schemasAreConsistent(dataframe, clientConfig.jdbcConnectionMerged.jdbcSchema, tableName, schemaFingerprint,
+        clientConfig.jdbcConnectionMerged.jdbcUrl, clientConfig.jdbcConnectionMerged.jdbcUsername,
+        clientConfig.jdbcConnectionMerged.jdbcPassword, sparkSession, JdbcWriteType.Merged)
+    } else true
 
-    val insertDF = tableDataFrameWrapperForMicroBatch.dataFrame
-    insertDF.cache()
-
-    // Determine if we need to create the table by checking if the table already exists.
-    val url = clientConfig.jdbcConnectionRaw.jdbcUrl
-    val dbm = connection.getMetaData
-    val dbProductName = dbm.getDatabaseProductName
-
-    val tableNameCaseSensitive = dbProductName match {
-      case "Microsoft SQL Server" | "PostgreSQL" => tableNameNoSchema
-      case "Oracle"                              => tableNameNoSchema.toUpperCase
-      case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
-    }
-    val tables = dbm.getTables(connection.getCatalog(), clientConfig.jdbcConnectionRaw.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
-    val tableExists = tables.next()
-
-    // Get some data we will need for later.
-    val dialect = JdbcDialects.get(url)
-    val insertSchema = insertDF.schema
-    val batchSize = 5000 // TODO consider making this configurable.
-
-    // Create the table if it does not already exist.
-    if (!tableExists) {
-      // Build create table statement.
-      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Raw, dbProductName)
-      // Execute the table create DDL
-      val stmt = connection.createStatement
-      log.info(s"Raw - $createTableDDL")
-      stmt.execute(createTableDDL)
-      stmt.close()
-      // Create table indexes for the new table.
-      createIndexes(connection, url, tableName, JdbcWriteType.Raw)
-      connection.commit()
-    }
-
-    // Build the insert statement.
-    val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
-    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
-    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
-    log.info(s"Raw - $insertStatement")
-
-    // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw)
-
-    log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+    jdbcRawIsOk && jdbcMergedIsOk
   }
 
-  /** Merge the raw transactions into a JDBC target database applying the inserts/updates/deletes
-   * according to transactions in the raw CDC data.
-   *
-   * @param tableDataFrameWrapperForMicroBatch has the data to be written
+  /**
+   * @param jdbcWriteType Merge vs Raw to determine exclusion of internal 'gwcbi_'
+   *                      columns when comparing schemas.  When merging data we remove those columns
+   *                      from the data set before saving the data so we don't want to check
+   *                      for them when comparing to the schema definition in the database.
    */
-  def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
-
-    log.info(s"+++ Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
-
-    val tableName = clientConfig.jdbcConnectionMerged.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
-    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
-
-    tableDataFrameWrapperForMicroBatch.dataFrame.cache()
-
-    // Get list of CDA internal use columns to get rid of - including both the gwcbi___ and client application-created gwcdac__ columns
-    val dropList = tableDataFrameWrapperForMicroBatch.dataFrame.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && (colName.toLowerCase.startsWith("gwcbi___") || colName.toLowerCase.startsWith("gwcdac__")))
-
-    // Log total rows to be merged for this fingerprint.
-    val totalCount = tableDataFrameWrapperForMicroBatch.dataFrame.count()
-    log.info(s"Merged - $tableName total count for all ins/upd/del: ${totalCount.toString}")
-
-    // Filter for records to insert and drop unwanted columns.
-    val insertDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(2, 0))
-      .drop(dropList: _*)
-      .cache()
-
-    // Log total rows to be inserted for this fingerprint.
-    val insertCount = insertDF.count()
-    log.info(s"Merged - $tableName insert count after filter: ${insertCount.toString}")
-
-    // Determine if we need to create the table by checking if the table already exists.
-    val url = clientConfig.jdbcConnectionMerged.jdbcUrl
-    val dbm = connection.getMetaData
-    val dbProductName = dbm.getDatabaseProductName
-    val tableNameCaseSensitive = dbProductName match {
-      case "Microsoft SQL Server" => tableNameNoSchema
-      case "PostgreSQL"           => tableNameNoSchema
-      case "Oracle"               => tableNameNoSchema.toUpperCase
-      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
-    }
-    val tables = dbm.getTables(connection.getCatalog(), clientConfig.jdbcConnectionMerged.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
-    val tableExists = tables.next
-
-    // Get some data we will need for later.
-    val dialect = JdbcDialects.get(url)
-    val insertSchema = insertDF.schema
-    val batchSize = 5000 // TODO consider making this configurable.
-
-    // Create the table if it does not already exist.
-    if (!tableExists) {
-      // Build create table statement.
-      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Merged, dbProductName)
-      log.info(s"Merged - $createTableDDL")
-      // Execute the table create DDL
-      val stmt = connection.createStatement
-      stmt.execute(createTableDDL)
-      stmt.close()
-
-      // Create table indexes for the new table.
-      createIndexes(connection, url, tableName, JdbcWriteType.Merged)
-      connection.commit()
-    }
-
-    // Build the insert statement.
-    val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
-    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
-    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
-    log.info(s"Merged - $insertStatement")
-
-    // Prepare and execute one insert statement per row in our insert dataframe.
-    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
-
-    insertDF.unpersist()
-
-    // Filter for records to update.
-    val updateDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(4))
-      .cache()
-
-    // Log total rows marked as updates.
-    val updateCount = updateDF.count()
-    log.info(s"Merged - $tableName update count after filter: ${updateCount.toString}")
-
-    // Generate and apply update statements based on the latest transaction for each id.
-    if (updateCount > 0) {
-
-      // Get the list of columns
-      val colNamesArray = updateDF.columns.toBuffer
-      // Remove the id and sequence from the list of columns so we can handle them separately.
-      // We will be grouping by the id and the sequence will be set as the first item in the list of columns.
-      colNamesArray --= Array("id")
-      val colNamesString = colNamesArray.mkString(",")
-
-      val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
-        // Find the latest change for each id based on the gwcbi___seqval_hex.
-        // Note: For nested structs, max on struct is computed as
-        // max on first struct field, if equal fall back to second fields, and so on.
-        // In this case the first struct field is gwcbi___seqval_hex which will be always
-        // be unique for each instance of an id in the group.
-        updateDF
-          .selectExpr(Seq("id", s"struct($colNamesString) as otherCols"): _*)
-          .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
-          .selectExpr("latest.*", "id", "latest.gwcbi___seqval_hex as hexseqvalue")
-          .drop(dropList: _*)
-          .cache()
-      } else {
-        // Retain all updates.  Sort so they are applied in the correct order.
-        val colVar = colNamesString + ",id, gwcbi___seqval_hex as hexseqvalue"
-        updateDF
-          .selectExpr(colVar.split(","): _*)
-          .sort(col("gwcbi___seqval_hex").asc)
-          .drop(dropList: _*)
-          .cache()
-      }
-      updateDF.unpersist()
-
-      val latestUpdCnt = latestChangeForEachID.count()
-      if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
-        // Log row count following the reduction to only last update for each id.
-        log.info(s"Merged - $tableName update count after agg to get latest for each id: ${latestUpdCnt.toString}")
-      } else {
-        log.info(s"Merged - $tableName all updates will be applied in sequence.")
-      }
-
-      // Build the sql Update statement to be used as a prepared statement for the Updates.
-      val colListForSetClause = latestChangeForEachID.columns
-        .filter(_ != "id")
-        .filter(_ != "hexseqvalue")
-      val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
-      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ? AND "gwcbi___seqval_hex" < ? """
-      log.info(s"Merged - $updateStatement")
-
-      // Get schema info required for updatePartition call.
-      val updateSchema = latestChangeForEachID.schema
-
-      // Prepare and execute one update statement per row in our update dataframe.
-      updateDataframe(connection, tableName, latestChangeForEachID, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
-
-      latestChangeForEachID.unpersist()
-    }
-
-    // Filter for records to be deleted.
-    // Deletes should be relatively rare since most data is retired in InsuranceSuite rather than deleted.
-    val deleteDF = tableDataFrameWrapperForMicroBatch.dataFrame.filter(col("gwcbi___operation").isin(1))
-      .selectExpr("id")
-      .cache()
-
-    // Log number of records to be deleted.
-    val deleteCount = deleteDF.count()
-    log.info(s"Merged - $tableName delete count after filter: ${deleteCount.toString}")
-
-    // Generate and apply delete statements.
-    if (deleteCount > 0) {
-      val deleteSchema = deleteDF.schema
-      // Build the sql Delete statement to be used as a prepared statement for the Updates.
-      val deleteStatement = s"""DELETE FROM $tableName WHERE "id" = ?"""
-      //      val deleteStatement = "DELETE FROM " + tableName + " WHERE \"id\" = ?"
-      log.info(s"Merged - $deleteStatement")
-
-      // Prepare and execute one delete statement per row in our delete dataframe.
-      updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
-
-      tableDataFrameWrapperForMicroBatch.dataFrame.unpersist()
-      deleteDF.unpersist()
-    }
-    log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
-  }
-
-  override def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
-                           user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
-
+  protected def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String,
+                                     schemaFingerprint: String, url: String, user: String, pswd: String,
+                                     spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = {
     //Derive the product name from the url to avoid having to create or pass in a connection
     // to access the metadata object.
     val dbProductName = if (url.toLowerCase.contains("sqlserver")) {
@@ -416,11 +206,11 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       val databaseConnection = DriverManager.getConnection(url, user, pswd)
       databaseConnection.setAutoCommit(false)
 
-      var newColumnAdded=false
+      var newColumnAdded = false
       //ADD COLUMNS TO DATABASE TABLE THAT HAVE BEEN ADDED TO PARQUET FILE
       // Check to see if there are columns in the parquet file that are not in the database table.
       // If there are we are going to build the ALTER TABLE statement and execute the statement.
-      fileSchemaDef.foreach(field => if(!scala.util.Try(tableDataFrame(field.name)).isSuccess) {
+      fileSchemaDef.foreach(field => if (!scala.util.Try(tableDataFrame(field.name)).isSuccess) {
         val columnDefinition = buildDDLColumnDefinition(dialect, dbProductName.toString, tableName, field.name, field.dataType, field.nullable)
         val alterTableStatement = s"ALTER TABLE $jdbcSchemaName.$tableName ADD $columnDefinition"
         log.warn(s"Statement to be executed: $alterTableStatement")
@@ -430,7 +220,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
           stmt.execute(alterTableStatement)
           stmt.close()
           databaseConnection.commit()
-          newColumnAdded=true
+          newColumnAdded = true
           log.warn(s"ALTER TABLE - SUCCESS '$tableName' for alter table statement $alterTableStatement - $url")
         } catch {
           case e: Exception =>
@@ -460,13 +250,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       } else { // instead of just logging "false", we need to check to see if there were table DDL changes executed
         if (newColumnAdded) {
           // check the schema comparison again, but now with the new table structure following ALTER statements
-          val newComparison = schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
-          if (newComparison) { // if its fine, just return true
-            true
-          }
-          else { // if there are still problems, return false - the second call to schemasAreConsistent will have logged any additional issues
-            false
-          }
+          schemasAreConsistent(fileDataFrame, jdbcSchemaName, tableName, schemaFingerprint, url, user, pswd, spark, jdbcWriteType)
         }
         else { //if there were not any ALTER statements to execute, just fail as normal and log message
           val logMsg = (s"""
@@ -494,6 +278,232 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     }
   }
 
+  /** Write RAW data to a JDBC target database.
+   *
+   * @param tableDataFrameWrapperForMicroBatch has the data to be written
+   */
+  def writeJdbcRaw(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
+
+    val tableName = clientConfig.jdbcConnectionRaw.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
+    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
+
+    log.info(s"*** Writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+
+    val insertDF = tableDataFrameWrapperForMicroBatch.dataFrame.persist(StorageLevel.MEMORY_AND_DISK)
+
+    // Determine if we need to create the table by checking if the table already exists.
+    val url = clientConfig.jdbcConnectionRaw.jdbcUrl
+    val dbm = connection.getMetaData
+    val dbProductName = dbm.getDatabaseProductName
+
+    val tableNameCaseSensitive = dbProductName match {
+      case "Microsoft SQL Server" | "PostgreSQL" => tableNameNoSchema
+      case "Oracle"                              => tableNameNoSchema.toUpperCase
+      case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
+    val tables = dbm.getTables(connection.getCatalog, clientConfig.jdbcConnectionRaw.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
+    val tableExists = tables.next()
+
+    // Get some data we will need for later.
+    val dialect = JdbcDialects.get(url)
+    val insertSchema = insertDF.schema
+
+    // Create the table if it does not already exist.
+    if (!tableExists) {
+      // Build create table statement.
+      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Raw, dbProductName)
+      // Execute the table create DDL
+      val stmt = connection.createStatement
+      log.info(s"Raw - $createTableDDL")
+      stmt.execute(createTableDDL)
+      stmt.close()
+      // Create table indexes for the new table.
+      createIndexes(connection, url, tableName, JdbcWriteType.Raw)
+      connection.commit()
+    }
+
+    // Build the insert statement.
+    val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
+    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
+    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
+    log.info(s"Raw - $insertStatement")
+
+    // Prepare and execute one insert statement per row in our insert dataframe.
+    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Raw)
+    insertDF.unpersist()
+    log.info(s"*** Finished writing '${tableDataFrameWrapperForMicroBatch.tableName}' raw data data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionRaw.jdbcUrl}")
+  }
+
+  /** Merge the raw transactions into a JDBC target database applying the inserts/updates/deletes
+   * according to transactions in the raw CDC data.
+   *
+   * @param tableDataFrameWrapperForMicroBatch has the data to be written
+   */
+  def writeJdbcMerged(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch, connection: Connection): Unit = {
+
+    log.info(s"+++ Merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+
+    val tableName = clientConfig.jdbcConnectionMerged.jdbcSchema + "." + tableDataFrameWrapperForMicroBatch.tableName
+    val tableNameNoSchema = tableDataFrameWrapperForMicroBatch.tableName
+    val persistedTableDataframe = tableDataFrameWrapperForMicroBatch.dataFrame.persist(StorageLevel.MEMORY_AND_DISK)
+
+    // Get list of CDA internal use columns to get rid of - including both the gwcbi___ and client application-created gwcdac__ columns
+    val dropList = persistedTableDataframe.columns.filter(colName => !colName.toLowerCase.equals("gwcbi___seqval_hex") && (colName.toLowerCase.startsWith("gwcbi___") || colName.toLowerCase.startsWith("gwcdac__")))
+
+    // Log total rows to be merged for this fingerprint.
+    val totalCount = persistedTableDataframe.count()
+    log.info(s"Merged - $tableName total count for all ins/upd/del: ${totalCount.toString}")
+
+    // Filter for records to insert and drop unwanted columns.
+    val insertDF = persistedTableDataframe
+      .filter(col("gwcbi___operation").isin(2, 0))
+      .drop(dropList: _*)
+      .persist(StorageLevel.MEMORY_AND_DISK)
+
+    // Log total rows to be inserted for this fingerprint.
+    val insertCount = insertDF.count()
+    log.info(s"Merged - $tableName insert count after filter: ${insertCount.toString}")
+
+    // Determine if we need to create the table by checking if the table already exists.
+    val url = clientConfig.jdbcConnectionMerged.jdbcUrl
+    val dbm = connection.getMetaData
+    val dbProductName = dbm.getDatabaseProductName
+    val tableNameCaseSensitive = dbProductName match {
+      case "Microsoft SQL Server" => tableNameNoSchema
+      case "PostgreSQL"           => tableNameNoSchema
+      case "Oracle"               => tableNameNoSchema.toUpperCase
+      case _                      => throw new SQLException(s"Unsupported database platform: $dbProductName")
+    }
+    val tables = dbm.getTables(connection.getCatalog, clientConfig.jdbcConnectionMerged.jdbcSchema, tableNameCaseSensitive, Array("TABLE"))
+    val tableExists = tables.next
+
+    // Get some data we will need for later.
+    val dialect = JdbcDialects.get(url)
+    val insertSchema = insertDF.schema
+
+    // Create the table if it does not already exist.
+    if (!tableExists) {
+      // Build create table statement.
+      val createTableDDL = getTableCreateDDL(dialect, insertSchema, tableName, JdbcWriteType.Merged, dbProductName)
+      log.info(s"Merged - $createTableDDL")
+      // Execute the table create DDL
+      val stmt = connection.createStatement
+      stmt.execute(createTableDDL)
+      stmt.close()
+
+      // Create table indexes for the new table.
+      createIndexes(connection, url, tableName, JdbcWriteType.Merged)
+      connection.commit()
+    }
+
+    // Build the insert statement.
+    val columns = insertSchema.fields.map(x => dialect.quoteIdentifier(x.name)).mkString(",")
+    val placeholders = insertSchema.fields.map(_ => "?").mkString(",")
+    val insertStatement = s"INSERT INTO $tableName ($columns) VALUES ($placeholders)"
+    log.info(s"Merged - $insertStatement")
+
+    // Prepare and execute one insert statement per row in our insert dataframe.
+    updateDataframe(connection, tableName, insertDF, insertSchema, insertStatement, batchSize, dialect, JdbcWriteType.Merged)
+    insertDF.unpersist()
+
+    // Filter for records to update.
+    val updateDF = persistedTableDataframe
+      .filter(col("gwcbi___operation").isin(4))
+
+    // Log total rows marked as updates.
+    val updateCount = updateDF.count()
+    log.info(s"Merged - $tableName update count after filter: ${updateCount.toString}")
+
+    // Generate and apply update statements based on the latest transaction for each id.
+    if (updateCount > 0) {
+      // Get the list of columns
+      val colNamesArray = updateDF.columns.toBuffer
+      // Remove the id and sequence from the list of columns so we can handle them separately.
+      // We will be grouping by the id and the sequence will be set as the first item in the list of columns.
+      colNamesArray --= Array("id")
+      val colNamesString = colNamesArray.mkString(",")
+
+      val latestChangeForEachID = if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
+        // Find the latest change for each id based on the gwcbi___seqval_hex.
+        // Note: For nested structs, max on struct is computed as
+        // max on first struct field, if equal fall back to second fields, and so on.
+        // In this case the first struct field is gwcbi___seqval_hex which will be always
+        // be unique for each instance of an id in the group.
+        updateDF
+          .selectExpr(Seq("id", s"struct($colNamesString) as otherCols"): _*)
+          .groupBy("id").agg(sqlfun.max("otherCols").as("latest"))
+          .selectExpr("latest.*", "id", "latest.gwcbi___seqval_hex as hexseqvalue")
+          .drop(dropList: _*)
+          .persist(StorageLevel.MEMORY_AND_DISK)
+      } else {
+        // Retain all updates.  Sort so they are applied in the correct order.
+        val colVar = colNamesString + ",id, gwcbi___seqval_hex as hexseqvalue"
+        updateDF
+          .selectExpr(colVar.split(","): _*)
+          .sort(col("gwcbi___seqval_hex").asc)
+          .drop(dropList: _*)
+          .persist(StorageLevel.MEMORY_AND_DISK)
+      }
+
+      val latestUpdCnt = latestChangeForEachID.count()
+      if (clientConfig.jdbcConnectionMerged.jdbcApplyLatestUpdatesOnly) {
+        // Log row count following the reduction to only last update for each id.
+        log.info(s"Merged - $tableName update count after agg to get latest for each id: ${latestUpdCnt.toString}")
+      } else {
+        log.info(s"Merged - $tableName all updates will be applied in sequence.")
+      }
+
+      // Build the sql Update statement to be used as a prepared statement for the Updates.
+      val colListForSetClause = latestChangeForEachID.columns
+        .filter(_ != "id")
+        .filter(_ != "hexseqvalue")
+      val colNamesForSetClause = colListForSetClause.map("\"" + _ + "\" = ?").mkString(", ")
+      val updateStatement = s"""UPDATE $tableName SET $colNamesForSetClause WHERE "id" = ? AND "gwcbi___seqval_hex" < ? """
+      log.info(s"Merged - $updateStatement")
+
+      // Get schema info required for updatePartition call.
+      val updateSchema = latestChangeForEachID.schema
+
+      // Prepare and execute one update statement per row in our update dataframe.
+      updateDataframe(connection, tableName, latestChangeForEachID, updateSchema, updateStatement, batchSize, dialect, JdbcWriteType.Merged)
+      latestChangeForEachID.unpersist()
+    }
+
+    // Filter for records to be deleted.
+    // Deletes should be relatively rare since most data is retired in InsuranceSuite rather than deleted.
+    val deleteDF = persistedTableDataframe
+      .filter(col("gwcbi___operation").isin(1))
+      .selectExpr("id")
+      .persist(StorageLevel.MEMORY_AND_DISK)
+    persistedTableDataframe.unpersist()
+
+    // Log number of records to be deleted.
+    val deleteCount = deleteDF.count()
+    log.info(s"Merged - $tableName delete count after filter: ${deleteCount.toString}")
+
+    // Generate and apply delete statements.
+    if (deleteCount > 0) {
+      val deleteSchema = deleteDF.schema
+      // Build the sql Delete statement to be used as a prepared statement for the Updates.
+      val deleteStatement = s"""DELETE FROM $tableName WHERE "id" = ?"""
+      //      val deleteStatement = "DELETE FROM " + tableName + " WHERE \"id\" = ?"
+      log.info(s"Merged - $deleteStatement")
+
+      // Prepare and execute one delete statement per row in our delete dataframe.
+      updateDataframe(connection, tableName, deleteDF, deleteSchema, deleteStatement, batchSize, dialect, JdbcWriteType.Merged)
+      deleteDF.unpersist()
+    }
+    log.info(s"+++ Finished merging '${tableDataFrameWrapperForMicroBatch.tableName}' data for fingerprint ${tableDataFrameWrapperForMicroBatch.schemaFingerprint} as JDBC to ${clientConfig.jdbcConnectionMerged.jdbcUrl}")
+  }
+
+  protected def validateDBConnection(jdbcUrl: String, jdbcUsername: String, jdbcPassword: String): Unit = {
+    val possibleConnection = Try(DriverManager.getConnection(jdbcUrl, jdbcUsername, jdbcPassword))
+    possibleConnection match {
+      case Success(connection) => connection.close()
+      case Failure(e)          => throw InvalidConfigParameterException("Connection could not be established. Check DB connection url and credentials.", e)
+    }
+  }
+
   def tableExists(tableName: String, jdbcSchemaName: String, url: String, user: String, pswd: String): Boolean = {
     val connection = DriverManager.getConnection(url, user, pswd)
     val dbm = connection.getMetaData
@@ -504,7 +514,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
       case "Oracle"                              => tableNameNoSchema.toUpperCase
       case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
     }
-    val tables = dbm.getTables(connection.getCatalog(), jdbcSchemaName, tableNameCaseSensitive, Array("TABLE"))
+    val tables = dbm.getTables(connection.getCatalog, jdbcSchemaName, tableNameCaseSensitive, Array("TABLE"))
 
     if (tables.next) {
       connection.close()
@@ -615,7 +625,7 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
    * @param tableName     name of the table without the schema prefix
    * @param jdbcWriteType indicates Raw or Merged data write type
    */
-  private def createIndexes(connection: Connection, url: String, tableName: String, jdbcWriteType: JdbcWriteType.Value): Unit = {
+  protected def createIndexes(connection: Connection, url: String, tableName: String, jdbcWriteType: JdbcWriteType.Value): Unit = {
     val stmt = connection.createStatement
     val tableNameNoSchema = tableName.substring(tableName.indexOf(".") + 1)
     if (url.toLowerCase.contains("sqlserver") || url.toLowerCase.contains("postgresql") || url.toLowerCase.contains("oracle")) {
@@ -659,26 +669,29 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
                               df: DataFrame,
                               rddSchema: StructType,
                               updateStmt: String,
-                              batchSize: Int,
+                              batchSize: Long,
                               dialect: JdbcDialect,
-                              jdbcWriteType: JdbcWriteType.Value
-                             ): Unit = {
+                              jdbcWriteType: JdbcWriteType.Value): Unit = {
     var completed = false
     var totalRowCount = 0L
     val dbProductName = conn.getMetaData.getDatabaseProductName
     try {
       val stmt = conn.prepareStatement(updateStmt)
       val setters = rddSchema.fields.map(f => makeSetter(conn, dialect, f.dataType))
-      //For Oracle only - map nullTypes to TINYINT for Boolean to work around Oracle JDBC driver issues
-      val nullTypes = rddSchema.fields
-        .map(f => if (dbProductName == "Oracle" && f.dataType == BooleanType) JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType
-        else getJdbcType(f.dataType, dialect).jdbcNullType)
+      // For Oracle only - map nullTypes to TINYINT for Boolean to work around Oracle JDBC driver issues
+      val nullTypes = rddSchema.fields.map {
+        field =>
+          if (dbProductName == "Oracle" && field.dataType == BooleanType) {
+            JdbcType("BYTE", java.sql.Types.TINYINT).jdbcNullType
+          } else {
+            getJdbcType(field.dataType, dialect).jdbcNullType
+          }
+      }
       val numFields = rddSchema.fields.length
 
       try {
         var rowCount = 0
-
-        df.collect().foreach { row =>
+        df.toLocalIterator().asScala.foreach { row =>
           var i = 0
           while (i < numFields) {
             if (row.isNullAt(i)) {
@@ -710,21 +723,21 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
     } catch {
       case e: SQLException =>
         val cause = e.getCause
-        val nextcause = e.getNextException
-        if (nextcause != null && cause != nextcause) {
+        val nextCause = e.getNextException
+        if (nextCause != null && cause != nextCause) {
           // If there is no cause already, set 'next exception' as cause. If cause is null,
           // it *may* be because no cause was set yet
           if (cause == null) {
             try {
-              e.initCause(nextcause)
+              e.initCause(nextCause)
             } catch {
               // Or it may be null because the cause *was* explicitly initialized, to *null*,
               // in which case this fails. There is no other way to detect it.
               // addSuppressed in this case as well.
-              case _: IllegalStateException => e.addSuppressed(nextcause)
+              case _: IllegalStateException => e.addSuppressed(nextCause)
             }
           } else {
-            e.addSuppressed(nextcause)
+            e.addSuppressed(nextCause)
           }
         }
         throw e

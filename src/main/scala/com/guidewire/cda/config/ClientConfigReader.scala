@@ -27,7 +27,8 @@ private[cda] case class OutputSettings(tablesToInclude: String,
                                        includeColumnNames: Boolean,
                                        saveAsSingleFile: Boolean,
                                        saveIntoTimestampDirectory: Boolean,
-                                       largeTextFields: String)
+                                       largeTextFields: String,
+                                       jdbcBatchSize: Long)
 
 private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: Int,
                                           var numberOfThreadsPerJob: Int,
@@ -36,6 +37,12 @@ private[cda] case class PerformanceTuning(var numberOfJobsInParallelMaxCount: In
 private[cda] case class SparkTuning(maxResultSize: String,
                                     driverMemory: String,
                                     executorMemory: String)
+
+private[cda] case class JdbcV2Connection(jdbcUsername: String,
+                                         jdbcPassword: String,
+                                         jdbcUrl: String,
+                                         jdbcSchema: String,
+                                         jdbcSaveMode: String)
 
 private[cda] case class JdbcConnectionRaw(jdbcUsername: String,
                                           jdbcPassword: String,
@@ -55,6 +62,7 @@ case class ClientConfig(sourceLocation: SourceLocation,
                         outputSettings: OutputSettings,
                         var performanceTuning: PerformanceTuning,
                         sparkTuning: SparkTuning,
+                        jdbcV2Connection: JdbcV2Connection,
                         jdbcConnectionRaw: JdbcConnectionRaw,
                         jdbcConnectionMerged: JdbcConnectionMerged)
 
@@ -166,7 +174,7 @@ object ClientConfigReader {
     //All boolean parameters will get a default value of false if they are not in the config.yaml file
 
     //Export options must be either file or jdbc
-    val validExportOptions = List("file", "jdbc")
+    val validExportOptions = List("file", "jdbc", "jdbc_v2")
     try {
       require(validExportOptions.contains(clientConfig.outputSettings.exportTarget.toLowerCase()),
         "outputSettings.exportTarget is is not valid.  Valid options are 'file' or 'jdbc'.")
