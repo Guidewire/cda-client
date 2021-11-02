@@ -141,12 +141,19 @@ outputSettings:
   tablesToInclude: ...
   saveIntoJdbcRaw: ...
   saveIntoJdbcMerged: ...
+  jdbcBatchSize: ...
   exportTarget: ...
   fileFormat: ...
   includeColumnNames: ...
   saveAsSingleFile: ...
   saveIntoTimestampDirectory: ...
   largeTextFields: ...
+jdbcV2Connection:
+  jdbcUsername: ...
+  jdbcPassword: ...
+  jdbcUrl: ...
+  jdbcSchema: ...
+  jdbcSaveMode: ... 
 jdbcConnectionRaw:
   jdbcUsername: ...
   jdbcPassword: ...
@@ -160,6 +167,7 @@ jdbcConnectionMerged:
   jdbcSchema: ...
   jdbcApplyLastestUpdatesOnly: ...
 performanceTuning:
+  sparkMaster: ...
   numberOfJobsInParallelMaxCount: ...
   numberOfThreadsPerJob: ...
 sparkTuning:
@@ -199,6 +207,8 @@ sparkTuning:
 <dd>Boolean (defaults to false)</dd><dd>Should be "true" to write data to a database in Raw format (all activities and operations included in the output). </dd>
 <dt><tt>saveIntoJdbcMerged</tt></dt>
 <dd>boolean (defaults to false)</dd><dd>Should be "true" to write data to a database in Merged format (more closely representing the source system data). </dd>
+<dt><tt>jdbcBatchSize</tt></dt>
+<dd>long (defaults to 5000)</dd><dd>DB transaction batch size. This parameter is used only with JDBC Raw and Merged mode.</dd>
 <dt><tt>exportTarget</tt></dt>
 <dd>(defaults to file)</dd><dd>Available export targets are <tt>file</tt> and <tt>jdbc</tt>.</dd>
 <dt><tt>fileFormat</tt></dt>
@@ -233,6 +243,19 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 
 </dl></dd>
 
+<dt><tt>jdbcV2Connection</tt></dt>
+<dd>Optional section
+<dl><dt><tt>jdbcUsername</tt></dt>
+<dd>User name used to connect to the database. Can be a placeholder value if using windows authentication for database connectivity. </dd>
+<dt><tt>jdbcPassword</tt></dt>
+<dd>Password used to connect to the database. Can be a placeholder value if using windows authentication for database connectivity.  </dd>
+<dt><tt>jdbcUrl</tt></dt>
+<dd>Connection string for database connectivity. </dd>
+<dt><tt>jdbcSchema</tt></dt>
+<dd>Database schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
+<dt><tt>jdbcSaveMode</tt></dt>
+<dd>(defaults to append)</dd><dd>Values <tt>overwrite</tt> or <tt>append</tt>. Recommended to use 'overwrite' when running bulk load else use 'append'. </dd></dl></dd>
+
 <dt><tt>jdbcConnectionRaw</tt></dt>
 <dd>Optional section
 <dl><dt><tt>jdbcUsername</tt></dt>
@@ -255,13 +278,15 @@ ALTER COLUMN [column] VARCHAR2(32767) // requires MAX_STRING_SIZE Oracle paramet
 <dt><tt>jdbcUrl</tt></dt>
 <dd>Connection string for database connectivity. </dd>
 <dt><tt>jdbcSchema</tt></dt>
-<dd>Ddatabase schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
+<dd>Database schema owner designation for tables written to the database. i.e. - 'dbo' is the default for SQL Server, 'public' is the default for PostgreSQL.</dd>
 <dt><tt>jdbcApplyLatestUpdatesOnly</tt></dt>
 <dd>Boolean (defaults to false)</dd><dd>Should be "true" for applying the latest version of a record for a given table. "false" will process all the activities for a record in the order they occurred. for CDC processing, the most recent entry for a given record is the current state of that record. this option allows the application of only that most recent activity and version of the record.</dd>
 </dl></dd>
 
 <dt><tt>performanceTuning</tt></dt>
 <dd>Optional section
+<dl><dt><tt>sparkMaster</tt></dt>
+<dd>(defaults to 'local')</dd><dd>Values <tt>local</tt> or <tt>yarn</tt>. Use 'yarn' when running the application on AWS EMR else use 'local'. </dd></dl></dd>
 <dl><dt><tt>numberOfJobsInParallelMaxCount</tt></dt>
 <dd>Integer - defaults to the number of processors on your machine</dd><dd>Depending on your machine/network, you can go to about 2 times that to get more concurrency.</dd>
 <dt><tt>numberOfThreadsPerJob</tt></dt>

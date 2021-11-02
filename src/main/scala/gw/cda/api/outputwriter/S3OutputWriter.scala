@@ -1,21 +1,23 @@
 package gw.cda.api.outputwriter
 
-import java.io.FileNotFoundException
-
 import com.amazonaws.services.s3.AmazonS3URI
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
 import gw.cda.api.utils.S3ClientSupplier
 import org.apache.hadoop.fs.FileAlreadyExistsException
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.SparkSession
+
+import java.io.FileNotFoundException
 
 private[outputwriter] class S3OutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
                                            override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
-                                           override val clientConfig: ClientConfig) extends OutputWriter {
+                                           override val clientConfig: ClientConfig) extends FileBasedOutputWriter {
 
   val outputURI = new AmazonS3URI(outputPath)
 
+  /**
+   * Validate the outputPath, making sure that it exists/is a valid directory. If there is a problem, throw an exception.
+   * In the case of S3 output, makes sure that the outputPath is in an existing S3 bucket and is also not an existing key to a S3 object.
+   */
   override def validate(): Unit = {
     //Make sure the S3 bucket exists
     if (!S3ClientSupplier.s3Client.doesBucketExistV2(this.outputURI.getBucket)) {
@@ -51,26 +53,4 @@ private[outputwriter] class S3OutputWriter(override val outputPath: String, over
     val yamlPath = getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch)
     S3ClientSupplier.s3Client.putObject(outputURI.getBucket, yamlPath, yamlString)
   }
-
-  override def write(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
-    val tableName = tableDataFrameWrapperForMicroBatch.tableName
-
-    if (clientConfig.outputSettings.exportTarget=="file") {
-      clientConfig.outputSettings.fileFormat.toLowerCase match {
-        case "csv" =>
-          log.info(s"Writing '$tableName' DataFrame as CSV to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
-          this.writeCSV(tableDataFrameWrapperForMicroBatch)
-          this.writeSchema(tableDataFrameWrapperForMicroBatch)
-          log.info(s"Wrote '$tableName' DataFrame as CSV complete, with columns ${tableDataFrameWrapperForMicroBatch.dataFrame.columns.toList}")
-        case "parquet" =>
-          log.info(s"Writing '$tableName' DataFrame as PARQUET to ${this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)}")
-          this.writeParquet(tableDataFrameWrapperForMicroBatch)
-          log.info(s"Wrote '$tableName' DataFrame as PARQUET complete")
-        case other => throw new Exception(s"Unknown output file format $other")
-      }
-    }
-  }
-
-  override def schemasAreConsistent(fileDataFrame: DataFrame, jdbcSchemaName: String, tableName: String, schemaFingerprint: String, url: String,
-                           user: String, pswd: String, spark: SparkSession, jdbcWriteType: JdbcWriteType.Value): Boolean = true
 }
