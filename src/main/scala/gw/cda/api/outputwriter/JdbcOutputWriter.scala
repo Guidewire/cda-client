@@ -1,18 +1,11 @@
 package gw.cda.api.outputwriter
 
-import java.io.File
-import java.io.IOException
-import java.nio.file.Files
-import java.nio.file.Paths
-import java.sql.Connection
-import java.sql.DriverManager
-import java.sql.PreparedStatement
-import java.sql.SQLException
-import java.util.Locale
-
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
+import gw.cda.api.utils.AWSUtils
 import org.apache.commons.io.FileUtils
+import org.apache.spark.sql.{functions => sqlfun}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.jdbc.JdbcDialect
 import org.apache.spark.sql.jdbc.JdbcType
 import org.apache.spark.sql.types.ArrayType
@@ -29,12 +22,22 @@ import org.apache.spark.sql.types.LongType
 import org.apache.spark.sql.types.ShortType
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.TimestampType
-import org.apache.spark.sql.{DataFrame, functions => sqlfun}
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.jdbc.JdbcDialects
 import org.apache.spark.sql.types.StructType
+
+import java.io.File
+import java.io.IOException
+import java.net.URI
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.sql.Connection
+import java.sql.DriverManager
+import java.sql.PreparedStatement
+import java.sql.SQLException
+import java.util.Locale
 
 private[outputwriter] class JdbcOutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
                                              override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
@@ -43,8 +46,12 @@ private[outputwriter] class JdbcOutputWriter(override val outputPath: String, ov
   private[outputwriter] val configLargeTextFields: Set[String] = Option(clientConfig.outputSettings.largeTextFields).getOrElse("").replace(" ", "").split(",").toSet
 
   override def validate(): Unit = {
-    if (!Files.isDirectory(Paths.get(outputPath))) {
-      throw new IOException(s"$outputPath is either not a local directory or doesn't exist")
+    val pathExists = new URI(outputPath).getScheme match {
+      case "s3" => AWSUtils.S3Utils.doesPathExists(outputPath)
+      case _    => Files.isDirectory(Paths.get(outputPath))
+    }
+    if (!pathExists) {
+      throw new IOException(s"$outputPath doesn't exist.")
     }
   }
 

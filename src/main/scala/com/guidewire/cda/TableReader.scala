@@ -1,7 +1,5 @@
 package com.guidewire.cda
 
-import java.util.concurrent.Semaphore
-import java.util.concurrent.atomic.AtomicInteger
 import com.amazonaws.services.s3.AmazonS3URI
 import com.amazonaws.services.s3.model.ListObjectsRequest
 import com.guidewire.cda.ManifestReader.ManifestMap
@@ -15,8 +13,11 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.functions.{lit, when}
+import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.when
 
+import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.JavaConversions._
 import scala.collection.parallel.ForkJoinTaskSupport
 import scala.concurrent.forkjoin.ForkJoinPool
@@ -53,12 +54,16 @@ class TableReader(clientConfig: ClientConfig) {
   // https://spark.apache.org/docs/latest/configuration.html
   private[cda] val conf: SparkConf = new SparkConf()
   conf.setAppName("Cloud Data Access Client")
-  private val numberOfExecutorThreads = if (clientConfig.performanceTuning.numberOfJobsInParallelMaxCount > Runtime.getRuntime.availableProcessors) {
-    s"local[${clientConfig.performanceTuning.numberOfJobsInParallelMaxCount}]"
-  } else {
-    "local[*]"
+  private val sparkMaster = clientConfig.performanceTuning.sparkMaster match {
+    case "yarn"  => clientConfig.performanceTuning.sparkMaster
+    case "local" =>
+      if (clientConfig.performanceTuning.numberOfJobsInParallelMaxCount > Runtime.getRuntime.availableProcessors) {
+        s"local[${clientConfig.performanceTuning.numberOfJobsInParallelMaxCount}]"
+      } else {
+        "local[*]"
+      }
   }
-  conf.setMaster(numberOfExecutorThreads)
+  conf.setMaster(sparkMaster)
   Option(clientConfig.sparkTuning)
     .foreach(sparkTuning => {
       // By default, Spark limits the maximum result size to 1GB, which is usually too small.
