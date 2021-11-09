@@ -7,8 +7,28 @@ The Cloud Data Access Client (CDA Client) is a utility to download table data fr
 
 The example code can be used to jump-start development of a custom implementation that can store CDA data in other storage formats (e.g., RDBMS Tables, Hadoop/Hive, JSON Files).
 Learn more about CDA [here](https://docs.guidewire.com/cloud/cda/banff/index.html).
+
 - - - 
 # What's New
+<details>
+<summary>November 2021</summary>
+<dl><dt><tt>Spark JDBC Sink write for "RAW" data output</tt></dt>
+<dd>Added a new class - SparkJDBCWriter - which extends JdbcOutputWriter.</dd>
+<dd>This class implements the Spark JDBC sink write to the database, and provides significant performance improvements as compared to the prepared statements used in JdbcOutputWriter.</dd>
+<dd>The df.collect() activity in JdbcOutputWriter was causing all data from the collapsed dataframe to be written to memory in the Driver node, causing out-of-memory errors for larger tables. This has been corrected.</dd>
+</dl>
+<dl><dt><tt>Additional config.yaml settings</tt></dt>
+<dd>outputSettings | jdbcBatchSize - batch size of database writes - specific to JdbcOutputWriter Raw/Merged only</dd>
+<dd>outputSettings | exportTarget - additional option - jdbc_v2 - used for new jdbc sink write to database</dd>
+<dd>jdbcV2Connection - connection information for jdbc sink operation</dd>
+<dd>performanceTuning | sparkMaster - set to 'local' for running local mode, or 'yarn' for running on EMR</dd>
+</dl>
+<dl><dt><tt>Items of note</tt></dt>
+<dd>"RAW" and "MERGED" settings in config.yaml: when exportTarget is jdbc_v2, set both saveIntoJdbcRaw and saveIntoJdbcMerged to false</dd>
+<dd>When sparkMaster is set to 'yarn', additional performanceTuning options are ignored.</dd>
+</dl>
+
+</details>
 <details>
 <summary>June 2021</summary>
 <dl><dt><tt>Jdbc "RAW" data output</tt></dt>
@@ -106,6 +126,15 @@ java -Xmx8g -jar cloud-data-access-client-1.0.jar --configPath "config.yaml"
 java -jar cloud-data-access-client-1.0.jar --configPath "config.yaml"
 ~~~~
 </li></ul>
+
+- - -
+### EMR Execution
+
+- For execution on EMR, set the sparkMaster config option to 'yarn' (without the single quotes)
+- Execution against spark-submit with various parameters (your own options may need to vary based on your cluster):
+~~~  
+spark-submit --deploy-mode cluster --class gw.cda.api.CloudDataAccessClient --jars s3://<cda-reader-jar> --master yarn --conf spark.yarn.maxAppAttempts=1 --conf spark.driver.cores=3 --conf spark.driver.memory=8G --conf spark.executor.instances=5 --conf spark.executor.cores=2 --conf spark.executor.memory=8G --conf spark.dynamicAllocation.enabled=false --conf spark.driver.maxResultSize=8G --conf "spark.driver.extraJavaOptions=-XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+G1SummarizeConcMark -XX:InitiatingHeapOccupancyPercent=35 -XX:OnOutOfMemoryError='kill -9 %p'" --conf "spark.executor.extraJavaOptions=-XX:+UseG1GC -XX:+UnlockDiagnosticVMOptions -XX:+G1SummarizeConcMark -XX:InitiatingHeapOccupancyPercent=35 -XX:OnOutOfMemoryError='kill -9 %p'" s3://<cda-reader-jar> -c s3://<config.yml>
+~~~
 
 - - -
 ### Tips
