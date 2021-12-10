@@ -25,9 +25,10 @@ Learn more about CDA [here](https://docs.guidewire.com/cloud/cda/banff/index.htm
 </dl>
 <dl><dt><tt>Items of note</tt></dt>
 <dd>"RAW" and "MERGED" settings in config.yaml: when exportTarget is jdbc_v2, set both saveIntoJdbcRaw and saveIntoJdbcMerged to false</dd>
+<dd>New "jdbc_v2" exportTarget setting ONLY writes out "RAW" data to the database connection. If "MERGED" data set is needed it will still use the prepared statements.</dd>
+<dd>In the current code version, the new JDBC Sink write cannot be used if "MERGED" output is needed. Work is needed to make that an option.</dd>
 <dd>When sparkMaster is set to 'yarn', additional performanceTuning options are ignored.</dd>
 </dl>
-
 </details>
 <details>
 <summary>June 2021</summary>
@@ -48,6 +49,53 @@ Learn more about CDA [here](https://docs.guidewire.com/cloud/cda/banff/index.htm
 <dd>Corrected support for loading into a single database with multiple schemas. Some basic code fixes here, but necessary especially in PostgreSQL and Oracle.</dd>
 <dd>Added support for out of range datetime values in the TimestampType fields for SQL Server. Previously, the Spark JDBC dialect code converted such data types to DATETIME. The data type is now forced to DATETIME2. This change is most likely to be a non-breaking change. Additional note: This will be corrected in the Spark libraries at some point - see GitHub link here https://github.com/apache/spark/pull/32655.</dd>
 </dl>
+</details>
+
+- - - 
+# AWS EMR Cluster and Performance Testing
+<details>
+<summary>Click to expand</summary>
+Guidewire has completed some basic performance testing in AWS EMR. The test CDA instance used represented:
+
+- a 4TB source database 
+- with around 715 tables containing around 7B rows,
+- resulting in about 350GB of parquet files
+- each table represented had one Fingerprint folder and one Timestamp folder
+
+- - - 
+## EMR Cluster
+### Hardware
+
+- **Master Node** 
+    - m5.xlarge, 4 vCore, 16 GiB memory, EBS only storage, EBS Storage:64 GiB
+- **Core Node**
+    - r5.2xlarge, 8 vCore, 64 GiB memory, EBS only storage, EBS Storage:256 GiB
+- **Task Node**
+    - m5.2xlarge, 8 vCore, 32 GiB memory, EBS only storage, EBS Storage:32 GiB
+
+- - - 
+### Performance Benchmarks
+#### JDBC V2 Sink ("RAW" Mode only) + Serverless Aurora PostgreSQL
+
+- **Number of tables** - ~715
+- **Number of records** - ~7B
+- **Spark Driver** - 3 cores, 8GB
+- **Spark Executors** - x5, 2 cores 8GB each
+- **maxResultSize** - 8GB
+- **Database type** - Serverless
+    - **ACUs** - 32-64
+- **Load time** - 19 Hours
+
+#### JDBC V2 Sink ("RAW" Mode only) + Aurora PostgreSQL on EC2
+
+- **Number of tables** - ~715
+- **Number of records** - ~7B
+- **Spark Driver** - 3 cores, 8GB
+- **Spark Executors** - x5, 2 cores 8GB each
+- **maxResultSize** - 8GB
+- **Database type** - EC2, Aurora PostgreSQL
+    - **EC2 instance size** - db.r5.2xlarge
+- **Load time** - 23 Hours
 </details>
 
 - - - 
