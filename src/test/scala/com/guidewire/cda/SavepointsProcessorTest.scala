@@ -13,7 +13,7 @@ import scala.io.Source
 @RunWith(classOf[JUnitRunner])
 class SavepointsProcessorTest extends CDAClientTestSpec {
 
-  private val tempDir = System.getProperty("java.io.tmpdir") //This will be an OS specific temp dir, with a "/" at the end
+  private val tempDir = System.getProperty("java.io.tmpdir").replaceAll("/?$", "/") //This will be an OS specific temp dir, with a "/" at the end
   private val testSavepointsPath: String = s"${tempDir}testsavepoints"
   private val testSavepointsDirectory = new File(testSavepointsPath)
   private val testSavepointsPathWithExistingFile: String = "src/test/resources"

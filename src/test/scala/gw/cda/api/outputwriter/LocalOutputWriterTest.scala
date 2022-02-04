@@ -20,7 +20,7 @@ import scala.io.Source
 
 class LocalOutputWriterTest extends CDAClientTestSpec {
 
-  private val tempDir = System.getProperty("java.io.tmpdir") //This will be an OS specific temp dir, with a "/" at the end
+  private val tempDir = System.getProperty("java.io.tmpdir").replaceAll("/?$", "/") //This will be an OS specific temp dir, with a "/" at the end
   private val testWriterPath = s"${tempDir}cda-client-test"
   private val testSchemaFingerprint = "schemaFingerprint"
   private val testDirectory = new File(testWriterPath)
