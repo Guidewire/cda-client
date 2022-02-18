@@ -5,7 +5,7 @@ The Open Source Reader (OSR) for Cloud Data Access (CDA) is a utility to downloa
 - Regenerate them into new `.parquet` files or aggregate them into fewer `.parquet` files
 - Load the data into a database: SQL Server, Oracle, PostgreSQL
 
-The OSR is also referred to as the CDA Client. The example code can be used to jump-start development of a custom implementation that can store CDA data in other storage formats (e.g., RDBMS Tables, Hadoop/Hive, JSON Files).
+The OSR is also referred to as the CDA Client and CDA Reader. The example code can be used to jump-start development of a custom implementation that can store CDA data in other storage formats (e.g., RDBMS Tables, Hadoop/Hive, JSON Files).
 Learn more about CDA [here](https://docs.guidewire.com/cloud/cda/banff/index.html).
 
 - - - 
