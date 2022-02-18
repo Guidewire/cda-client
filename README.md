@@ -170,6 +170,7 @@ java -Xmx8g -jar cloud-data-access-client-1.0.jar --configPath "config.yaml"
 ~~~~
 </li>
 <li>If you are downloading incremental changes, run the utility with this command, where the option <tt>--configPath</tt> or <tt>-c</tt> designates the path to the configuration file:
+    
 ~~~~
 java -jar cloud-data-access-client-1.0.jar --configPath "config.yaml"
 ~~~~
