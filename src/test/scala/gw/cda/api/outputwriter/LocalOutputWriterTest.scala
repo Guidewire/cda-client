@@ -13,17 +13,17 @@ import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 
-import java.io.File
 import java.io.IOException
+import java.nio.file.Paths
 import java.util.Date
 import scala.io.Source
 
 class LocalOutputWriterTest extends CDAClientTestSpec {
 
-  private val tempDir = System.getProperty("java.io.tmpdir") //This will be an OS specific temp dir, with a "/" at the end
-  private val testWriterPath = s"${tempDir}cda-client-test"
+  private val tmpDirSystemProperty = System.getProperty("java.io.tmpdir") //This will be an OS specific temp dir
+  private val testWriterPath = Paths.get(tmpDirSystemProperty, "cda-client-test").normalize()
   private val testSchemaFingerprint = "schemaFingerprint"
-  private val testDirectory = new File(testWriterPath)
+  private val testDirectory = testWriterPath.toFile
   private val clientConfig = ClientConfigReader.processConfigFile(testConfigPath)
 
   override def beforeAll(): Unit = {
@@ -68,9 +68,9 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
 
   describe("Testing OutputWriter functionality") {
 
-    val testWriter = FileBasedOutputWriter(OutputWriterConfig(testWriterPath, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
-    val testWriterWithHeader = FileBasedOutputWriter(OutputWriterConfig(testWriterPath, includeColumnNames = true, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
-    val testWriterWithTimestamp = FileBasedOutputWriter(OutputWriterConfig(testWriterPath, includeColumnNames = true, saveAsSingleFile = true, saveIntoTimestampDirectory = true, clientConfig = clientConfig))
+    val testWriter = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
+    val testWriterWithHeader = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
+    val testWriterWithTimestamp = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = true, saveIntoTimestampDirectory = true, clientConfig = clientConfig))
 
     val letters = "ABCDEFGHI"
     val numbers = 1 to 10
@@ -83,11 +83,11 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
       it("should validate folders that can be written to and otherwise throw exceptions") {
         testWriter.validate()
 
-        val writer2path = "src/test/resources/nonexisting"
+        val writer2path = Paths.get("src/test/resources/nonexisting").toUri
         val writer2 = FileBasedOutputWriter(OutputWriterConfig(writer2path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
         a[IOException] should be thrownBy writer2.validate()
 
-        val writer3path = testManifestPath
+        val writer3path = Paths.get(testManifestPath).toUri
         val writer3 = FileBasedOutputWriter(OutputWriterConfig(writer3path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
         a[IOException] should be thrownBy writer3.validate()
       }

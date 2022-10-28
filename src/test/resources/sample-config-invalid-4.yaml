@@ -4,7 +4,7 @@ sourceLocation:
 outputLocation:
   path: dummy/path/ #has a slash at the end, this messes up S3
 savepointsLocation:
-  path: dummy/path
+  uri: file:///dummy/path
 outputSettings:
   exportTarget: file
   saveIntoJdbcRaw: true

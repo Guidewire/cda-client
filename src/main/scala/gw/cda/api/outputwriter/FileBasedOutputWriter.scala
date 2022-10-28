@@ -12,7 +12,6 @@ import org.apache.spark.sql.types.BinaryType
 import org.apache.spark.sql.Row
 
 import java.io.StringWriter
-import java.net.URI
 import scala.util.parsing.json.JSONObject
 
 trait FileBasedOutputWriter extends OutputWriter {
@@ -189,11 +188,11 @@ trait FileBasedOutputWriter extends OutputWriter {
 
 object FileBasedOutputWriter {
   def apply(outputWriterConfig: OutputWriterConfig): FileBasedOutputWriter = {
-    new URI(outputWriterConfig.outputPath).getScheme match {
+    outputWriterConfig.outputUri.getScheme match {
       case "s3" =>
-        new S3OutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+        new S3OutputWriter(outputWriterConfig.outputUri.getPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
       case _    =>
-        new LocalFilesystemOutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+        new LocalFilesystemOutputWriter(outputWriterConfig.outputUri.getPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
     }
   }
 }
