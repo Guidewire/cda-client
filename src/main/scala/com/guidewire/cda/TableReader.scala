@@ -16,6 +16,8 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.functions.when
 
+import java.net.URI
+import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.JavaConversions._
 
@@ -86,14 +88,14 @@ class TableReader(clientConfig: ClientConfig) {
 
     try {
       // Get savepoints of last read--if they exist--and validate the path to write the savepoints at
-      val savepointsProcessor = new SavepointsProcessor(clientConfig.savepointsLocation.path)
+      val savepointsProcessor = new SavepointsProcessor(new URI(clientConfig.savepointsLocation.uri))
 
       // Create OutputWriter and validate it
       val outputPath = clientConfig.outputLocation.path
       val includeColumnNames = clientConfig.outputSettings.includeColumnNames
       val saveAsSingleFile = clientConfig.outputSettings.saveAsSingleFile
       val saveIntoTimestampDirectory = clientConfig.outputSettings.saveIntoTimestampDirectory
-      val outputWriterConfig = OutputWriterConfig(outputPath, includeColumnNames, saveAsSingleFile, saveIntoTimestampDirectory, clientConfig)
+      val outputWriterConfig = OutputWriterConfig(Paths.get(outputPath).toAbsolutePath.toUri, includeColumnNames, saveAsSingleFile, saveIntoTimestampDirectory, clientConfig)
       val outputWriter = OutputWriter(outputWriterConfig)
       outputWriter.validate()
 

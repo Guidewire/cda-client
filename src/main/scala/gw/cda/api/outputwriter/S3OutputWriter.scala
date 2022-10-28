@@ -3,12 +3,14 @@ package gw.cda.api.outputwriter
 import com.amazonaws.services.s3.AmazonS3URI
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
-import gw.cda.api.utils.S3ClientSupplier
+import gw.cda.api.utils.{S3ClientSupplier, UriUtils}
 import org.apache.hadoop.fs.FileAlreadyExistsException
 
 import java.io.FileNotFoundException
+import java.net.URI
+import java.nio.file.Paths
 
-private[outputwriter] class S3OutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
+private[outputwriter] class S3OutputWriter(override val outputPath: URI, override val includeColumnNames: Boolean,
                                            override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
                                            override val clientConfig: ClientConfig) extends FileBasedOutputWriter {
 
@@ -34,23 +36,23 @@ private[outputwriter] class S3OutputWriter(override val outputPath: String, over
    using a s3 connector. Writing with "s3://" does indeed result in some issues such
    as messy temporary files, and there are no such problems with using "s3a://"
    */
-  override def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
-    val pathPrefix = outputPath.replaceFirst("^s3", "s3a")
+  override def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI = {
+    val pathPrefix = UriUtils.scheme(outputPath, "s3a")
     val basePathToFolder = getBasePathToFolder(pathPrefix, tableDataFrameWrapperForMicroBatch)
     basePathToFolder
   }
 
-  override def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
+  override def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI = {
     val pathPrefix = outputURI.getKey
-    val basePathToFolder = getBasePathToFolder(pathPrefix, tableDataFrameWrapperForMicroBatch)
-    val fullPathToSchema = s"$basePathToFolder/$schemaFileName"
+    val basePathToFolder = getBasePathToFolder(new URI("s3a", null, pathPrefix, null), tableDataFrameWrapperForMicroBatch)
+    val fullPathToSchema = basePathToFolder.resolve(new URI(null, null, schemaFileName, null))
     fullPathToSchema
   }
 
   override def writeSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
     val tableDF = tableDataFrameWrapperForMicroBatch.dataFrame
     val yamlString = makeSchemaYamlString(tableDF)
-    val yamlPath = getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch)
+    val yamlPath = Paths.get(getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch)).toString
     S3ClientSupplier.s3Client.putObject(outputURI.getBucket, yamlPath, yamlString)
   }
 }

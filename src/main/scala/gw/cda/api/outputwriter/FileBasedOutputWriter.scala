@@ -2,7 +2,7 @@ package gw.cda.api.outputwriter
 
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
-import gw.cda.api.utils.ObjectMapperSupplier
+import gw.cda.api.utils.{ObjectMapperSupplier, UriUtils}
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.expressions.UserDefinedFunction
 import org.apache.spark.sql.functions.udf
@@ -13,6 +13,7 @@ import org.apache.spark.sql.Row
 
 import java.io.StringWriter
 import java.net.URI
+import java.nio.file.Paths
 import scala.util.parsing.json.JSONObject
 
 trait FileBasedOutputWriter extends OutputWriter {
@@ -20,7 +21,7 @@ trait FileBasedOutputWriter extends OutputWriter {
   val schemaFileName = "schema.yaml"
   //Instance vars that are passed in during constructor of the concrete classes
   val includeColumnNames: Boolean
-  val outputPath: String
+  val outputPath: URI
   val saveAsSingleFile: Boolean
   val saveIntoTimestampDirectory: Boolean
   val clientConfig: ClientConfig
@@ -60,14 +61,14 @@ trait FileBasedOutputWriter extends OutputWriter {
    * @param tableDataFrameWrapperForMicroBatch A DataFrameForMicroBatch with the table info
    * @return String with the correct path FOLDER to write the CSV
    */
-  def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String
+  def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI
 
   /** Constructs the correct path to local filesystem or to S3 location to write YAMLs to.
    *
    * @param tableDataFrameWrapperForMicroBatch A DataFrameForMicroBatch with the table info
    * @return String with the correct path FILE to write the SCHEMA
    */
-  def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String
+  def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI
 
   /** Build the path to a common folder structure: PREFIX/table/timestamp
    *
@@ -75,10 +76,10 @@ trait FileBasedOutputWriter extends OutputWriter {
    * @param tableDataFrameWrapperForMicroBatch has the data to be written
    * @return the path to the folder
    */
-  def getBasePathToFolder(pathPrefix: String, tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
-    val pathWithTableName = s"$pathPrefix/${tableDataFrameWrapperForMicroBatch.tableName}/${tableDataFrameWrapperForMicroBatch.schemaFingerprint}"
+  def getBasePathToFolder(pathPrefix: URI, tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI = {
+    val pathWithTableName = UriUtils.append(pathPrefix, Paths.get(tableDataFrameWrapperForMicroBatch.tableName, tableDataFrameWrapperForMicroBatch.schemaFingerprint))
     if (saveIntoTimestampDirectory) {
-      s"$pathWithTableName/${tableDataFrameWrapperForMicroBatch.manifestTimestamp}"
+      UriUtils.append(pathWithTableName, Paths.get(tableDataFrameWrapperForMicroBatch.manifestTimestamp))
     } else {
       pathWithTableName
     }
@@ -123,11 +124,11 @@ trait FileBasedOutputWriter extends OutputWriter {
       tableDataFrameWrapperForMicroBatch.dataFrame
         .coalesce(1)
         .write.mode(SaveMode.Overwrite)
-        .parquet(pathToFolderWithParquet)
+        .parquet(Paths.get(pathToFolderWithParquet).normalize().toString)
     } else {
       tableDataFrameWrapperForMicroBatch.dataFrame.write
         .mode(SaveMode.Overwrite)
-        .parquet(pathToFolderWithParquet)
+        .parquet(Paths.get(pathToFolderWithParquet).normalize().toString)
     }
   }
 
@@ -153,7 +154,7 @@ trait FileBasedOutputWriter extends OutputWriter {
    */
   private[outputwriter] def writeCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): Unit = {
     val tableDF = flattenDataframe(tableDataFrameWrapperForMicroBatch.dataFrame)
-    val pathToFolderWithCSV = this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)
+    val pathToFolderWithCSV = Paths.get(this.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch)).toString
 
     if (saveAsSingleFile) {
       // This is much slower, coalesce(1) has to reshuffle all the partitions to 1
@@ -189,11 +190,11 @@ trait FileBasedOutputWriter extends OutputWriter {
 
 object FileBasedOutputWriter {
   def apply(outputWriterConfig: OutputWriterConfig): FileBasedOutputWriter = {
-    new URI(outputWriterConfig.outputPath).getScheme match {
+    outputWriterConfig.outputUri.getScheme match {
       case "s3" =>
-        new S3OutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+        new S3OutputWriter(outputWriterConfig.outputUri, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
       case _    =>
-        new LocalFilesystemOutputWriter(outputWriterConfig.outputPath, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
+        new LocalFilesystemOutputWriter(outputWriterConfig.outputUri, outputWriterConfig.includeColumnNames, outputWriterConfig.saveAsSingleFile, outputWriterConfig.saveIntoTimestampDirectory, outputWriterConfig.clientConfig)
     }
   }
 }

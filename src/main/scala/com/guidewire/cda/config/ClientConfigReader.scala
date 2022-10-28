@@ -17,7 +17,7 @@ private[cda] case class SourceLocation(bucketName: String,
 
 private[cda] case class OutputLocation(path: String)
 
-private[cda] case class SavepointsLocation(path: String)
+private[cda] case class SavepointsLocation(uri: String)
 
 private[cda] case class OutputSettings(tablesToInclude: String,
                                        saveIntoJdbcRaw: Boolean,
@@ -276,13 +276,13 @@ object ClientConfigReader {
     }
 
     try {
-      require(clientConfig.savepointsLocation.path != null, "savepointsLocation.path is blank")
+      require(clientConfig.savepointsLocation.uri != null, "savepointsLocation.path is blank")
     } catch {
       case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter is missing, or is left blank in the config file", e)
     }
 
     try {
-      require(clientConfig.savepointsLocation.path.endsWith("/") != true, "savepointsLocation.path has a trailing slash, remove it")
+      require(clientConfig.savepointsLocation.uri.endsWith("/") != true, "savepointsLocation.path has a trailing slash, remove it")
     } catch {
       case e: IllegalArgumentException => throw InvalidConfigParameterException("Config parameter has an invalid value", e)
     }
