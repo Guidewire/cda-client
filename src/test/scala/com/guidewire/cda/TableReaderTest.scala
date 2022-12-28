@@ -1,7 +1,6 @@
 package com.guidewire.cda
 
-import java.nio.file.Files
-
+import java.nio.file.{Files, Paths}
 import com.amazonaws.services.s3.AmazonS3URI
 import com.guidewire.cda.config.ClientConfig
 import com.guidewire.cda.config.ClientConfigReader
@@ -153,7 +152,7 @@ class TableReaderTest extends CDAClientTestSpec {
       it("should retain all fingerprints if no savepoint data exists") {
         val tempSavepointsDir = Files.createTempDirectory(Random.nextLong.toHexString)
         try {
-          val emptySavepoints = new SavepointsProcessor(tempSavepointsDir.toString)
+          val emptySavepoints = new SavepointsProcessor(tempSavepointsDir.toUri)
           val testManifestEntry = testManifest("taccountlineitem")
           val fingerprints = tableReader.getFingerprintsWithUnprocessedRecords(testTableName, testManifestEntry, emptySavepoints)
           fingerprints.toSet shouldEqual Set("123456789")
@@ -163,7 +162,7 @@ class TableReaderTest extends CDAClientTestSpec {
       }
 
       it("should discard fingerprints without records left to process") {
-        val existingSavepointsDir = "src/test/resources"
+        val existingSavepointsDir = Paths.get("src/test/resources").toUri
         val testSavepointsProcessor = new SavepointsProcessor(existingSavepointsDir)
         val testTableName = "taccount"
         val testManifestEntry = testManifest(testTableName)

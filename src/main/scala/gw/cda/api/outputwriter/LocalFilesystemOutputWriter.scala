@@ -2,14 +2,16 @@ package gw.cda.api.outputwriter
 
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfig
+import gw.cda.api.utils.UriUtils
 import org.apache.commons.io.FileUtils
 
 import java.io.File
 import java.io.IOException
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Paths
 
-private[outputwriter] class LocalFilesystemOutputWriter(override val outputPath: String, override val includeColumnNames: Boolean,
+private[outputwriter] class LocalFilesystemOutputWriter(override val outputPath: URI, override val includeColumnNames: Boolean,
                                                         override val saveAsSingleFile: Boolean, override val saveIntoTimestampDirectory: Boolean,
                                                         override val clientConfig: ClientConfig) extends FileBasedOutputWriter {
 
@@ -23,16 +25,16 @@ private[outputwriter] class LocalFilesystemOutputWriter(override val outputPath:
     }
   }
 
-  override def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
+  override def getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI = {
     val pathPrefix = this.outputPath
     val basePathToFolder = getBasePathToFolder(pathPrefix, tableDataFrameWrapperForMicroBatch)
     basePathToFolder
   }
 
-  override def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): String = {
+  override def getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch: DataFrameWrapperForMicroBatch): URI = {
     val pathPrefix = this.outputPath
     val basePathToFolder = getBasePathToFolder(pathPrefix, tableDataFrameWrapperForMicroBatch)
-    val fullPathToSchema = s"$basePathToFolder/$schemaFileName"
+    val fullPathToSchema = UriUtils.append(basePathToFolder, Paths.get(schemaFileName))
     fullPathToSchema
   }
 

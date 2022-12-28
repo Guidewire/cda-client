@@ -3,7 +3,7 @@ package gw.cda.api.outputwriter
 import com.guidewire.cda.DataFrameWrapperForMicroBatch
 import com.guidewire.cda.config.ClientConfigReader
 import com.guidewire.cda.specs.CDAClientTestSpec
-import gw.cda.api.utils.ObjectMapperSupplier
+import gw.cda.api.utils.{ObjectMapperSupplier, UriUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.Row
@@ -13,22 +13,27 @@ import org.apache.spark.sql.types.StringType
 import org.apache.spark.sql.types.StructField
 import org.apache.spark.sql.types.StructType
 
-import java.io.File
 import java.io.IOException
+import java.nio.file.Paths
 import java.util.Date
 import scala.io.Source
 
 class LocalOutputWriterTest extends CDAClientTestSpec {
 
-  private val tempDir = System.getProperty("java.io.tmpdir") //This will be an OS specific temp dir, with a "/" at the end
-  private val testWriterPath = s"${tempDir}cda-client-test"
+  private val tmpDirSystemProperty = System.getProperty("java.io.tmpdir") //This will be an OS specific temp dir
+  private val testWriterPath = Paths.get(tmpDirSystemProperty, "cda-client-test").normalize().toAbsolutePath
   private val testSchemaFingerprint = "schemaFingerprint"
-  private val testDirectory = new File(testWriterPath)
+  private val testDirectory = testWriterPath.toFile
   private val clientConfig = ClientConfigReader.processConfigFile(testConfigPath)
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    testDirectory.mkdir()
+    if (testDirectory.exists()) {
+      FileUtils.deleteDirectory(testDirectory)
+    }
+    if (!testDirectory.mkdir()) {
+      throw new IllegalStateException(s"Error creating test temp data directory: ${testDirectory.toURI}")
+    }
   }
 
   override def afterAll(): Unit = {
@@ -68,9 +73,9 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
 
   describe("Testing OutputWriter functionality") {
 
-    val testWriter = FileBasedOutputWriter(OutputWriterConfig(testWriterPath, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
-    val testWriterWithHeader = FileBasedOutputWriter(OutputWriterConfig(testWriterPath, includeColumnNames = true, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
-    val testWriterWithTimestamp = FileBasedOutputWriter(OutputWriterConfig(testWriterPath, includeColumnNames = true, saveAsSingleFile = true, saveIntoTimestampDirectory = true, clientConfig = clientConfig))
+    val testWriter = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
+    val testWriterWithHeader = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
+    val testWriterWithTimestamp = FileBasedOutputWriter(OutputWriterConfig(testWriterPath.toUri, includeColumnNames = true, saveAsSingleFile = true, saveIntoTimestampDirectory = true, clientConfig = clientConfig))
 
     val letters = "ABCDEFGHI"
     val numbers = 1 to 10
@@ -83,11 +88,11 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
       it("should validate folders that can be written to and otherwise throw exceptions") {
         testWriter.validate()
 
-        val writer2path = "src/test/resources/nonexisting"
+        val writer2path = Paths.get("src/test/resources/nonexisting").toUri
         val writer2 = FileBasedOutputWriter(OutputWriterConfig(writer2path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
         a[IOException] should be thrownBy writer2.validate()
 
-        val writer3path = testManifestPath
+        val writer3path = Paths.get(testManifestPath).toUri
         val writer3 = FileBasedOutputWriter(OutputWriterConfig(writer3path, includeColumnNames = false, saveAsSingleFile = false, saveIntoTimestampDirectory = false, clientConfig = clientConfig))
         a[IOException] should be thrownBy writer3.validate()
       }
@@ -98,7 +103,7 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
         val testDF = makeDummyDataFrame(letters, numbers)
         val testDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(testTableName, testSchemaFingerprint, schemaFingerprintTimestamp, manifestLastSaveTimestamp, testDF)
         testWriter.writeCSV(testDataFrameWrapperForMicroBatch)
-        val testDFReread = sparkSession.sqlContext.read.csv(s"$testWriterPath/$testTableName/$testSchemaFingerprint/*")
+        val testDFReread = sparkSession.sqlContext.read.csv(s"${testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).toAbsolutePath.toString}/*")
         // match schema of reread table so avoid checking column types (which are only strings in reread table)
         val testDFStringOnly = testDF.withColumn("c1", testDF("c1").cast(StringType))
         testDFReread.collect should contain theSameElementsAs testDFStringOnly.collect
@@ -110,7 +115,7 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
         testWriterWithHeader.writeCSV(testDataFrameWrapperForMicroBatch)
         // make string of all the column names to compare against
         val schemaFieldNames = testDF.schema.fields.map(field => field.name).mkString(",")
-        val headerFile = sparkSession.sparkContext.textFile(s"$testWriterPath/$testTableNameWithHeader/$testSchemaFingerprint/*")
+        val headerFile = sparkSession.sparkContext.textFile(s"${testWriterPath.resolve(testTableNameWithHeader).resolve(testSchemaFingerprint).toAbsolutePath.toString}/*")
         // pull first line of CSV to make sure the column names were written to the first line
         headerFile.first() shouldEqual schemaFieldNames
       }
@@ -119,7 +124,7 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
         val testDF = makeDummyDataFrameWithStructType()
         val testDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(testTableName, testSchemaFingerprint, schemaFingerprintTimestamp, manifestLastSaveTimestamp, testDF)
         testWriter.writeCSV(testDataFrameWrapperForMicroBatch)
-        val testDFReread = sparkSession.sqlContext.read.csv(s"$testWriterPath/$testTableName/$testSchemaFingerprint/*")
+        val testDFReread = sparkSession.sqlContext.read.csv(s"${testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).toAbsolutePath.toString}/*")
         val parsedCSVString = testDFReread.select("_c0").collect().map(_ (0)).toList.mkString
         val expectedOutput = "{\"c11\" : \"ABC\", \"c12\" : \"something\"}"
         parsedCSVString shouldEqual expectedOutput
@@ -129,24 +134,24 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
     describe("OutputWriter.makeCSVPath") {
       it("should correctly create the path for a local csv given the table name and fingerprint") {
         val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(testTableName, testSchemaFingerprint, schemaFingerprintTimestamp, manifestLastSaveTimestamp, null)
-        testWriter.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch) shouldEqual s"$testWriterPath/$testTableName/$testSchemaFingerprint"
+        testWriter.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch).getPath shouldEqual UriUtils.prune(testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).toUri).getPath
       }
 
       it("should correctly create the path for a local csv given the table name, and have the timestamp") {
         val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(testTableName, testSchemaFingerprint, schemaFingerprintTimestamp, manifestLastSaveTimestamp, null)
-        testWriterWithTimestamp.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch) shouldEqual s"$testWriterPath/$testTableName/$testSchemaFingerprint/$manifestLastSaveTimestamp"
+        testWriterWithTimestamp.getPathToFolderWithCSV(tableDataFrameWrapperForMicroBatch).getPath shouldEqual UriUtils.prune(testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).resolve(manifestLastSaveTimestamp).toUri).getPath
       }
     }
 
     describe("OutputWriter.makeSchemaPath") {
       it("should correctly create the path for a local schema given the table name") {
         val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(testTableName, testSchemaFingerprint, schemaFingerprintTimestamp, manifestLastSaveTimestamp, null)
-        testWriter.getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch) shouldEqual s"$testWriterPath/$testTableName/$testSchemaFingerprint/${testWriter.schemaFileName}"
+        testWriter.getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch).getPath shouldEqual UriUtils.prune(testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).resolve(testWriter.schemaFileName).toUri).getPath
       }
 
       it("should correctly create the path for a local schema given the table name and schema fingerprint, and have the timestamp") {
         val tableDataFrameWrapperForMicroBatch = DataFrameWrapperForMicroBatch(testTableName, testSchemaFingerprint, schemaFingerprintTimestamp, manifestLastSaveTimestamp, null)
-        testWriterWithTimestamp.getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch) shouldEqual s"$testWriterPath/$testTableName/$testSchemaFingerprint/$manifestLastSaveTimestamp/${testWriterWithTimestamp.schemaFileName}"
+        testWriterWithTimestamp.getPathToFileWithSchema(tableDataFrameWrapperForMicroBatch).getPath shouldEqual UriUtils.prune(testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).resolve(manifestLastSaveTimestamp).resolve(testWriterWithTimestamp.schemaFileName).toUri).getPath
       }
     }
 
@@ -161,7 +166,7 @@ class LocalOutputWriterTest extends CDAClientTestSpec {
         })
 
         testWriter.writeSchema(testDataFrameWrapperForMicroBatch)
-        val testSchemaSource = Source.fromFile(s"$testWriterPath/$testTableName/$testSchemaFingerprint/${testWriter.schemaFileName}")
+        val testSchemaSource = Source.fromFile(testWriterPath.resolve(testTableName).resolve(testSchemaFingerprint).resolve(testWriter.schemaFileName).toFile)
         val testSchemaString = testSchemaSource.getLines.mkString("\n")
         testSchemaSource.close
         val testSchemaFieldsListReread = ObjectMapperSupplier.yamlMapper.readValue(testSchemaString, classOf[List[Map[String, String]]])

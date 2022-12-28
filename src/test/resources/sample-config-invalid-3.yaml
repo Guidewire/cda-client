@@ -5,7 +5,7 @@
 outputLocation:
   path: dummy/path
 savepointsLocation:
-  path: dummy/path
+  uri: file:///dummy/path
 outputSettings:
   exportTarget: file
   saveIntoJdbcRaw: true
