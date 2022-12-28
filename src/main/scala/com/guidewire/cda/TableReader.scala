@@ -412,7 +412,7 @@ class TableReader(clientConfig: ClientConfig) {
            |for being later than the manifest last successful write timestamp $manifestTimestampForTable""".stripMargin.replaceAll("\n", " ")
       )
     }
-    includeFolder
+    (includeFolder && S3ClientSupplier.s3Client.doesObjectExist(tableTimestampSubfolderInfo.timestampSubfolderURI.getBucket,tableTimestampSubfolderInfo.timestampSubfolderURI.getKey + "_SUCCESS"))
   }
 
   /** Function to read each timestamp subfolder's files into a Spark DataFrame. Results will be stored in
