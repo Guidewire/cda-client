@@ -187,13 +187,18 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
         case "Oracle"                              => s"(select * from $jdbcSchemaName.$tableName where 1=2)"
         case _                                     => throw new SQLException(s"Unsupported database platform: $dbProductName")
       }
-      val tableDataFrame = spark.read.format("jdbc")
+      val reader = spark.read.format("jdbc")
         .option("url", url)
         .option("dbtable", sql)
         .option("user", user)
         .option("password", pswd)
-        .load()
 
+      //Explicitly loading PostgreSQL driver for TableDataFrame
+      if(dbProductName.equals("PostgreSQL")){
+        reader.option("driver", "org.postgresql.Driver")
+      }
+
+      val tableDataFrame = reader.load()
       val dialect = JdbcDialects.get(url)
       val tableSchemaDef = tableDataFrame.schema
       val fileSchemaDef = if (jdbcWriteType == JdbcWriteType.Merged) {
@@ -616,7 +621,7 @@ private[outputwriter] class JdbcOutputWriter(override val clientConfig: ClientCo
     else getJdbcType(fieldDataType, dialect).databaseTypeDefinition
     val nullableQualifier = if (!fieldNullable) "NOT NULL" else ""
     columnDefinition.append(s"$fieldNameQuoted $fieldDataTypeDefinition $nullableQualifier")
-    columnDefinition.toString()
+    columnDefinition.toString().toLowerCase
   }
 
   /**
