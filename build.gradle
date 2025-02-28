@@ -33,6 +33,7 @@ dependencies {
   compile "com.microsoft.sqlserver:mssql-jdbc:$sqlserverVersion"
   compile "org.postgresql:postgresql:$postgresqlVersion"
   implementation "com.oracle.database.jdbc:ojdbc8:$oracleVersion"
+  implementation "org.xerial.snappy:snappy-java:1.1.8.4"
 }
 
 wrapper {
