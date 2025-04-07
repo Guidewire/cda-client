@@ -16,6 +16,16 @@ repositories {
 }
 
 dependencies {
+  constraints {
+    implementation ("org.apache.parquet:parquet-avro") {
+      version {
+        prefer '1.15.1'
+        strictly '[1.15.1,2.0.0]'
+      }
+      because 'CVE-2025-30065 : Apache Parquet Remote Code Execution Vulnerability'
+    }
+  }
+
   implementation "org.scala-lang:scala-library:$scalaVersion.$scalaBuild"
   testImplementation "org.scalatest:scalatest_$scalaVersion:$scalaTestVersion"
   testImplementation "junit:junit:$jUnitVersion"
