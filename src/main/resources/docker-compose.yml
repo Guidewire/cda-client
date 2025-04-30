@@ -1,0 +1,31 @@
+version: '3'
+services:
+  postgres:
+    image: artifactory.guidewire.com/hub-docker-remote/postgres:11.9
+    #image: debezium/postgres:13-alpine
+    restart: always
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "idle_in_transaction_session_timeout=10s"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=test
+    ports:
+      - '5432:5432'
+    volumes:
+      - db:/var/lib/postgresql/data
+      # - ./config/setup.sh:/docker-entrypoint-initdb.d/initdb.sh
+    networks:
+      - localsetup
+
+volumes:
+  db:
+    driver: local
+
+networks:
+  localsetup:
+    driver: bridge

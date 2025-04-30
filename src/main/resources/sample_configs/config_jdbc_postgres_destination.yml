@@ -1,0 +1,31 @@
+sourceLocation:
+  bucketName: <cda-s3-bucket-name>
+  manifestKey: <s3-prefix>/manifest.json
+
+outputLocation:
+  path: <output-path>/cda_client_output # or s3 url
+
+savepointsLocation:
+  path: <output-path>/cda_client_output # or s3 url
+
+outputSettings:
+  # tablesToInclude is a comma-delimited list of tables to include. leave blank or omit to include all tables in the output.
+  tablesToInclude: pctl_activity,pc_activity
+  exportTarget: jdbc_v2 # valid options for exportTarget are file, jdbc, jdbc_v2
+  saveIntoJdbcRaw: false
+  saveIntoJdbcMerged: false
+  jdbcBatchSize: 2000000
+  largeTextFields:
+
+jdbcV2Connection:
+  ### POSTGRES ###
+  jdbcUsername: postgres
+  jdbcPassword: postgres
+  # create db before running OSR
+  jdbcUrl: 'jdbc:postgresql://localhost/cda_osr_test'
+  jdbcSchema: public
+  jdbcSaveMode: append # Recommended: Use 'overwrite' for bulk mode else use 'append'
+
+performanceTuning:
+  sparkMaster: local # default='local' ['yarn' for EMR]
+#  numberOfJobsInParallelMaxCount: 5 # optional (leverage max threads by default)

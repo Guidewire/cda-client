@@ -1,0 +1,23 @@
+sourceLocation:
+  bucketName: <cda-s3-bucket-name>
+  manifestKey: <s3-prefix>/manifest.json
+
+outputLocation:
+  path: <output-path>/cda_client_output # or s3 url
+
+savepointsLocation:
+  path: <output-path>/cda_client_output # or s3 url
+
+outputSettings:
+  # tablesToInclude is a comma-delimited list of tables to include. leave blank or omit to include all tables in the output.
+  tablesToInclude: pctl_activity,pc_activity
+  exportTarget: file # valid options for exportTarget are file, jdbc, jdbc_v2
+  saveAsSingleFile: true
+  fileFormat: csv # valid options for fileFormat are csv or parquet. Required if saveIntoFile is true.
+  includeColumnNames: true
+  saveIntoTimestampDirectory: true
+  largeTextFields:
+
+performanceTuning:
+  sparkMaster: local # default = `local` [`yarn` for EMR]
+#  numberOfJobsInParallelMaxCount: 5 # optional (leverage max threads by default)

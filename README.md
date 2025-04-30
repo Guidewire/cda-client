@@ -161,8 +161,8 @@ export AWS_PROFILE=myProfile
 ~~~~
 * More information can be found here for setting up [AWS Credentials](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-configure.html)
 
-2. Download the sample configuration file from the Git repository folder `/src/test/resources/sample_config.yaml` and save under a new name such as `config.yaml`.
-3. Configure the `config.yaml` file.
+2. Download the sample configuration file `sample.config.yaml` from the Git repository and save under a new name such as `config.yaml`.
+3. Configure the `config.yaml` file. Refer to the other config files under `/src/main/resources/sample_configs`. 
 4. Run the utility by executing the jar from the command line with one of these commands:
    <ul><li>If you are running the OSR for the first time (without a `savepoints.json` file from a previous run) or have a large amount of data in the S3 bucket, both reading and writing can take a substantial amount of time depending on your machine. By default, the Java runtime environment [allocates a maximum of 1/4 of the computer's memory](https://docs.oracle.com/javase/8/docs/technotes/guides/vm/gc-ergonomics.html). It may be necessary to increase the memory available to the application for larger amounts of data. For example, run the OSR with an increased maximum memory allocation of 8 GB ("8g") with this command:
 ~~~~
